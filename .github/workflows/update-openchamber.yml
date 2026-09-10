@@ -1,0 +1,103 @@
+name: Update OpenChamber
+
+on:
+  schedule:
+    - cron: "32 * * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-openchamber
+  cancel-in-progress: false
+
+jobs:
+  check-update:
+    runs-on: ubuntu-24.04
+    outputs:
+      should_update: ${{ steps.check.outputs.should_update }}
+      version: ${{ steps.check.outputs.version }}
+      commit_message: ${{ steps.check.outputs.commit_message }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./.github/update-openchamber.sh --only-check
+
+  # Run the updater (prefetch + flake update) exactly once; the matrix
+  # below and the commit job reuse its output via artifact.
+  prepare-update:
+    needs: check-update
+    if: needs.check-update.outputs.should_update == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./.github/update-openchamber.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: updated-versions
+          path: |
+            versions.nix
+            flake.lock
+
+  test-build:
+    needs: [check-update, prepare-update]
+    if: needs.check-update.outputs.should_update == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [openchamber-server, openchamber-web, openchamber-gui]
+        system: [x86_64-linux, aarch64-linux]
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: updated-versions
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: DeterminateSystems/flakehub-cache-action@v1
+      - uses: cachix/cachix-action@v17
+        with:
+          name: openchamber
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - run: nix build .#${{ matrix.package }} --print-build-logs
+      - run: nix flake check --no-build
+
+  commit:
+    needs: [check-update, prepare-update, test-build]
+    if: needs.check-update.outputs.should_update == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: updated-versions
+      - uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: ${{ needs.check-update.outputs.commit_message }}
+          file_pattern: "versions.nix flake.lock"
+          tagging_message: ${{ needs.check-update.outputs.version }}
