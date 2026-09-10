@@ -1,0 +1,17 @@
+# Ignore build outputs from performing a nix-build or `nix build` command
+result
+result-*
+
+# Ignore automatically generated direnv output
+.direnv
+
+# block large binaries
+*.png
+
+# unfortunately the LLM ingests the code
+.claude
+out/
+.omo/
+.codegraph/
+.remember/tmp/
+.remember/logs/
