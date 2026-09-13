@@ -54,9 +54,9 @@ Following [isabelroses' "I'm not mad, I'm disappointed"](https://isabelroses.com
 minimalist stance for small flakes:
 
 - **Single `nixpkgs` input.** No `flake-parts`, `flake-utils`, `nix-systems`,
-  or treefmt/pre-commit inputs to lock. `flake.lock` pins exactly one node.
+  or treefmt/pre-commit inputs to lock. `flake.lock` pins exactly one input.
 - **`forAllSystems` is just `lib.genAttrs`** over an explicit system list
-  (`lib/systems` single source of truth; Linux-only because the GUI is a
+  (`systems in lib/default.nix` single source of truth; Linux-only because the GUI is a
   Linux AppImage). That one-liner is all flake-utils ever gave us here.
 - **System-independent overlay** (`_: prev:` + `prev.callPackage` only, never
   `self.packages.${system}`), so it composes freely with other overlays.
@@ -122,7 +122,7 @@ Without the overlay, inject the flake's package set instead:
 
 ```nix
 { inputs, ... }: {
-  _module.args.extpkgs = inputs.openchamber-nix.legacyPackages.${pkgs.system};
+  _module.args.extpkgs = inputs.openchamber-nix.legacyPackages.${pkgs.stdenv.hostPlatform.system};
 }
 ```
 

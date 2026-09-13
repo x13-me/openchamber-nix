@@ -16,7 +16,7 @@ let
   # file at once — fan out to one invocation per file.
   statixFixAll = writeShellScriptBin "statix-fix-all" ''
     for target in "$@"; do
-      ${statix}/bin/statix fix "$target" || exit 1
+      ${statix}/bin/statix fix -- "$target" || exit 1
     done
   '';
 in

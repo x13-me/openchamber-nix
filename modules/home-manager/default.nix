@@ -21,6 +21,12 @@ let
   # module args only reach *named* formals (see `applyModuleArgs`), so an
   # `@args` capture would silently miss the injection.
   extpkgs = config._module.args.extpkgs or pkgs;
+  requirePackage =
+    name:
+    if builtins.hasAttr name extpkgs then
+      extpkgs.${name}
+    else
+      throw "openchamber-nix: `${name}` not found — apply the overlay (`nixpkgs.overlays = [ inputs.openchamber-nix.overlays.default ];`) or inject the flake package set (`_module.args.extpkgs = inputs.openchamber-nix.legacyPackages.\${pkgs.stdenv.hostPlatform.system};`).";
   cfg = config.programs.openchamber-gui;
 in
 {
@@ -32,7 +38,7 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = extpkgs.openchamber-gui;
+      default = requirePackage "openchamber-gui";
       defaultText = lib.literalExpression "pkgs.openchamber-gui";
       description = "The openchamber-gui package to install (provided by this flake's overlay, or `_module.args.extpkgs`).";
     };
@@ -45,7 +51,7 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = extpkgs.openchamber-server;
+      default = requirePackage "openchamber-server";
       defaultText = lib.literalExpression "pkgs.openchamber-server";
       description = "The openchamber-server package to install (provided by this flake's overlay, or `_module.args.extpkgs`).";
     };

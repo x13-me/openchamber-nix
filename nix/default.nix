@@ -34,8 +34,10 @@ let
       public = lib.filterAttrs (isUsableOn pkgs) (lib.getAttrs publicNames scope);
     in
     public
-    // {
+    // lib.optionalAttrs (public ? openchamber-gui) {
       openchamber-gui-appimage = public.openchamber-gui;
+    }
+    // lib.optionalAttrs (public ? openchamber-server) {
       default = public.openchamber-server;
     }
   );
@@ -50,18 +52,22 @@ in
     let
       system = pkgs.stdenv.hostPlatform.system;
       built = packages.${system};
+    in
+    lib.optionalAttrs (built ? openchamber-gui) {
       openchamber-gui = {
         type = "app";
         program = "${built.openchamber-gui}/bin/openchamber-gui";
       };
+    }
+    // lib.optionalAttrs (built ? openchamber-server) {
       openchamber-server = {
         type = "app";
         program = "${built.openchamber-server}/bin/openchamber";
       };
-    in
-    {
-      inherit openchamber-gui openchamber-server;
-      default = openchamber-server;
+      default = {
+        type = "app";
+        program = "${built.openchamber-server}/bin/openchamber";
+      };
     }
   );
 
@@ -130,7 +136,12 @@ in
   hydraJobs =
     let
       jobsFor =
-        system: map (name: lib.nameValuePair "${name}-${system}" packages.${system}.${name}) publicNames;
+        system:
+        let
+          available = packages.${system};
+          present = lib.filter (name: available ? ${name}) publicNames;
+        in
+        map (name: lib.nameValuePair "${name}-${system}" available.${name}) present;
     in
     lib.listToAttrs (lib.concatMap jobsFor systems);
 

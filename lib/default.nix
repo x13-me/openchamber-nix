@@ -124,6 +124,11 @@ lib.makeExtensible (_final: {
         the module writes `/etc/openchamber/settings.json` and points
         the service at it — confirm the exact flag/env contract against
         `openchamber serve --help` for your pinned version.
+
+        Never put secrets in settings: the generated file lives in the
+        world-readable Nix store (the `/etc` copy is mode `0440`, but the
+        store copy stays readable). Use password-file / credential options
+        for secrets.
       '';
     };
 })

@@ -29,7 +29,12 @@ let
   extpkgs = config._module.args.extpkgs or pkgs;
   cfg = config.services.openchamber;
   jsonFormat = pkgs.formats.json { };
-  settingsFile = jsonFormat.generate "openchamber-settings.json" cfg.settings;
+  requirePackage =
+    name:
+    if builtins.hasAttr name extpkgs then
+      extpkgs.${name}
+    else
+      throw "openchamber-nix: `${name}` not found — apply the overlay (`nixpkgs.overlays = [ inputs.openchamber-nix.overlays.default ];`) or inject the flake package set (`_module.args.extpkgs = inputs.openchamber-nix.legacyPackages.\${pkgs.stdenv.hostPlatform.system};`).";
 in
 {
   _class = "nixos";
@@ -48,7 +53,7 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = extpkgs.openchamber-server;
+      default = requirePackage "openchamber-server";
       defaultText = lib.literalExpression "pkgs.openchamber-server";
       description = "The openchamber-server package to run (provided by this flake's overlay, or `_module.args.extpkgs`).";
     };
@@ -97,15 +102,25 @@ in
           };
         };
       }
-      (lib.mkIf (cfg.settings != { }) {
-        # Freeform settings (default `{}` = this block vanishes, behavior
-        # unchanged). Confirm the exact flag/env contract against
-        # `openchamber serve --help` for your pinned version; the JSON
-        # file path itself is stable.
-        environment.etc."openchamber/settings.json".source = settingsFile;
-        systemd.services.openchamber.environment.OPENCHAMBER_SETTINGS_FILE =
-          "/etc/openchamber/settings.json";
-      })
+      (lib.mkIf (cfg.settings != { }) (
+        let
+          settingsFile = jsonFormat.generate "openchamber-settings.json" cfg.settings;
+        in
+        {
+          # Freeform settings (default `{}` = this block vanishes, behavior
+          # unchanged). Confirm the exact flag/env contract against
+          # `openchamber serve --help` for your pinned version; the JSON
+          # file path itself is stable.
+          # NOTE: the store copy is world-readable — never put secrets in
+          # `settings`; use `uiPasswordFile` / credentials for secrets.
+          environment.etc."openchamber/settings.json" = {
+            source = settingsFile;
+            mode = "0440";
+          };
+          systemd.services.openchamber.environment.OPENCHAMBER_SETTINGS_FILE =
+            "/etc/openchamber/settings.json";
+        }
+      ))
     ]
   );
 }

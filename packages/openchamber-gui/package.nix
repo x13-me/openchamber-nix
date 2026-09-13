@@ -35,7 +35,7 @@ appimageTools.wrapType2 {
       for desktop in ${extracted}/*.desktop; do
         install -Dm444 "$desktop" -t $out/share/applications
       done
-      sed -i 's|^Exec=AppRun.*|Exec=openchamber-gui|' $out/share/applications/*.desktop
+      sed -i 's|^Exec=AppRun[^ ]*|Exec=openchamber-gui|' $out/share/applications/*.desktop
       if [ -d ${extracted}/usr/share/icons ]; then
         cp -r ${extracted}/usr/share/icons $out/share/
         # The extracted store tree is read-only; `cp -r` preserves those
