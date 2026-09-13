@@ -29,6 +29,11 @@ let
   extpkgs = config._module.args.extpkgs or pkgs;
   cfg = config.services.openchamber;
   jsonFormat = pkgs.formats.json { };
+  # True while the service runs as the auto-created system account (see
+  # the `user`/`group` assertion below: both stay at, or both leave, the
+  # default together). Only then does the module force HOME/XDG/data paths
+  # under `dataDir`; a custom login `user` inherits that account's HOME.
+  isSystemUser = cfg.user == "openchamber";
   requirePackage =
     name:
     if builtins.hasAttr name extpkgs then
@@ -48,6 +53,26 @@ in
 
   options.services.openchamber = {
     enable = lib.mkEnableOption "OpenChamber server";
+
+    # NOTE: `mkEnableOption` defaults to false; the web UI stays on unless
+    # opted out, so this is a plain bool defaulting to true (`enable*`
+    # naming matches the repo's existing bools).
+    enableWebUI = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether to serve the builtin browser web UI alongside the API.
+
+        When disabled, `openchamber serve` starts in API-only mode: the
+        service passes `--api-only` on the command line and sets
+        `OPENCHAMBER_API_ONLY=1` in the environment. Both are honored by
+        the pinned upstream (either alone would suffice; setting both is
+        harmless — upstream itself forwards one into the other). Browser
+        UI assets are not served; API routes stay available.
+      '';
+    };
+
+    dataDir = openchamberLib.mkDataDirOption { };
 
     host = openchamberLib.mkHostOption { };
 
@@ -106,7 +131,7 @@ in
         # nonexistent or mismatched account.
         assertions = [
           {
-            assertion = (cfg.user == "openchamber") == (cfg.group == "openchamber");
+            assertion = isSystemUser == (cfg.group == "openchamber");
             message = ''services.openchamber: `user` and `group` must be set together — e.g. user = "alice" requires group = "users" (keep both at "openchamber" or customize both).'';
           }
         ];
@@ -115,7 +140,7 @@ in
         # used). A custom `user`/`group` must already exist — e.g. point
         # `user` at your login account so the server can reach HOME,
         # ~/.ssh, git config, and workspace files.
-        users.users = lib.mkIf (cfg.user == "openchamber") {
+        users.users = lib.mkIf isSystemUser {
           openchamber = {
             isSystemUser = true;
             inherit (cfg) group;
@@ -134,25 +159,57 @@ in
             OPENCHAMBER_HOST = cfg.host;
             OPENCHAMBER_PORT = toString cfg.port;
           }
+          // lib.optionalAttrs (!cfg.enableWebUI) {
+            # API-only fallback env (the `--api-only` CLI flag in ExecStart
+            # below is the primary switch; both are honored by the pinned
+            # upstream 1.23.0 — `--api-only` in `serve` arg parsing plus
+            # `OPENCHAMBER_API_ONLY` (`1`/`true`) in the server entrypoint).
+            OPENCHAMBER_API_ONLY = "1";
+          }
+          // lib.optionalAttrs isSystemUser {
+            # Writable pathing for the default system account: systemd
+            # starts system users with a bare environment, and
+            # StateDirectory alone only creates /var/lib/openchamber
+            # without pointing HOME/XDG at it — upstream would then resolve
+            # its data dir (`$HOME/.config/openchamber` unless
+            # OPENCHAMBER_DATA_DIR is set) to nowhere writable. Force the
+            # whole HOME/XDG tree plus OPENCHAMBER_DATA_DIR under `dataDir`.
+            # Skipped for a custom login `user` so personal-user instances
+            # inherit that account's HOME (`~/.config/openchamber` etc.).
+            HOME = "${cfg.dataDir}";
+            XDG_CONFIG_HOME = "${cfg.dataDir}/.config";
+            XDG_DATA_HOME = "${cfg.dataDir}/.local/share";
+            XDG_STATE_HOME = "${cfg.dataDir}/.local/state";
+            XDG_CACHE_HOME = "${cfg.dataDir}/.cache";
+            OPENCHAMBER_DATA_DIR = "${cfg.dataDir}/.config/openchamber";
+          }
           // lib.optionalAttrs (cfg.uiPasswordFile != null) {
             # Staged via LoadCredential below so the service never needs
             # direct read access to the raw host path (e.g. /run/secrets).
             OPENCHAMBER_UI_PASSWORD_FILE = "/run/credentials/openchamber.service/ui-password";
           };
           serviceConfig = {
-            ExecStart = lib.escapeShellArgs [
-              "${cfg.package}/bin/openchamber"
-              "serve"
-              "--host"
-              cfg.host
-              "--port"
-              (toString cfg.port)
-            ];
+            ExecStart = lib.escapeShellArgs (
+              [
+                "${cfg.package}/bin/openchamber"
+                "serve"
+                "--host"
+                cfg.host
+                "--port"
+                (toString cfg.port)
+              ]
+              ++ lib.optionals (!cfg.enableWebUI) [ "--api-only" ]
+            );
             Restart = "on-failure";
             User = cfg.user;
             Group = cfg.group;
             # Owned by User:Group; keeps state across upgrades.
             StateDirectory = "openchamber";
+            # Upstream resolves its data dir from HOME/XDG (or
+            # OPENCHAMBER_DATA_DIR above); give the server a real writable
+            # cwd instead of systemd's `/` default, and allow writes there.
+            WorkingDirectory = cfg.dataDir;
+            ReadWritePaths = [ cfg.dataDir ];
           }
           // lib.optionalAttrs (cfg.uiPasswordFile != null) {
             # LoadCredential stages the secret where the static service

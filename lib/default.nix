@@ -43,6 +43,39 @@ lib.makeExtensible (_final: {
     versions.systems.${system}.arch or (throw "openchamber-nix: no arch mapping for system ${system}");
 
   /**
+    Standard writable state directory option for `services.openchamber`.
+
+    Backs the systemd `WorkingDirectory` / `ReadWritePaths` wiring and,
+    for the default `openchamber` system user, the forced `HOME` / XDG /
+    `OPENCHAMBER_DATA_DIR` paths. Personal-user instances (custom `user`)
+    inherit the login user's `HOME` instead and ignore this for data
+    resolution.
+
+    # Arguments
+
+    - `default`: state directory (defaults to `"/var/lib/openchamber"`).
+  */
+  mkDataDirOption =
+    {
+      default ? "/var/lib/openchamber",
+    }:
+    lib.mkOption {
+      type = lib.types.path;
+      inherit default;
+      description = ''
+        Writable state directory for the service (systemd WorkingDirectory
+        and ReadWritePaths).
+
+        When running as the default `openchamber` system user, this is also
+        the base for the forced HOME, XDG_CONFIG_HOME, XDG_DATA_HOME,
+        XDG_STATE_HOME, XDG_CACHE_HOME, and OPENCHAMBER_DATA_DIR environment
+        (`<dataDir>/.config/openchamber`). When `user` points at an existing
+        login account, HOME/XDG are inherited from that account instead, so
+        personal-user instances keep using `~/.config/openchamber` etc.
+      '';
+    };
+
+  /**
     Standard UI bind host option for `services.openchamber`.
 
     # Arguments

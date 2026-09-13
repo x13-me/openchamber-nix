@@ -117,6 +117,7 @@ NixOS module:
     # user = "youruser";
     # group = "users";
     # uiPasswordFile = "/run/secrets/openchamber-password";
+    # enableWebUI = false;  # API-only mode: REST API without browser UI assets
     # settings = { };  # freeform attrs -> /etc/openchamber/settings.json
   };
 }
