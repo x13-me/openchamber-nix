@@ -1,19 +1,18 @@
-name: Build OpenChamber
+name: Check
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  check:
     strategy:
       fail-fast: false
       matrix:
-        package: [openchamber-server, openchamber-web, openchamber-gui]
-        system: [x86_64-linux, aarch64-linux]
         include:
           - system: x86_64-linux
             runner: ubuntu-24.04
@@ -31,5 +30,5 @@ jobs:
         with:
           name: openchamber
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - run: nix build .#${{ matrix.package }} --print-build-logs
-      - run: nix flake check --no-build
+      - run: nix flake check --no-build --all-systems
+      - run: nix fmt -- --ci
