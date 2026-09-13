@@ -35,12 +35,18 @@ let
   # under `dataDir`; a custom login `user` inherits that account's HOME.
   isSystemUser = cfg.user == "openchamber";
   # Effective bind address: `lan` mirrors upstream `serve --lan`, which only
-  # fills in when no explicit `--host` is given — i.e. a loopback-default
-  # `host` becomes `0.0.0.0`, an explicitly customized `host` wins.
+  # fills in when no explicit `--host` is given (`bin/lib/cli-args.js:543`:
+  # `if (options.lan && typeof options.host !== 'string') host = '0.0.0.0'`)
+  # — i.e. a loopback-default `host` becomes `0.0.0.0`, an explicitly
+  # customized `host` wins.
   effectiveHost = if cfg.lan && cfg.host == "127.0.0.1" then "0.0.0.0" else cfg.host;
-  # Loopback forms, mirroring upstream `isLoopbackBindHost` (localhost,
-  # 127/8, ::1, bracketed ::1) for the common spellings; anything else is
-  # treated as network-exposed and needs UI auth (see assertion below).
+  # Loopback forms, mirroring upstream `isLoopbackBindHost`
+  # (`server/lib/security/bind-host.js:24`: `localhost`, numeric `127/8`
+  # via `isLoopbackIpv4`, `::1` after bracket-strip/lowercase; anything
+  # else is network-exposed and needs UI auth — see assertion below).
+  # `127.0.0.1` stays listed explicitly for readability; the regex covers
+  # the rest of numeric `127/8` the way `net.isIP(...) === 4` does
+  # (so `127.foo` is NOT loopback here, matching upstream's refusal).
   isLoopbackHost =
     let
       normalized = lib.toLower effectiveHost;
@@ -51,7 +57,36 @@ let
       "::1"
       "[::1]"
     ]
-    || lib.hasPrefix "127." normalized;
+    || builtins.match "127(\\.[0-9]{1,3}){1,3}" normalized != null;
+  # True while the service account is defined in this evaluation (either
+  # the auto-created `openchamber` system account or a declared login
+  # user). An externally-managed account (LDAP/SSSD) is unknown here —
+  # tmpfiles and user-package wiring must not assume it.
+  accountDefined =
+    let
+      account = config.users.users.${cfg.user} or null;
+    in
+    isSystemUser || (account != null && (account.isNormalUser || account.isSystemUser));
+  # Raw `serve` argv, shared by the direct ExecStart and the
+  # password-wrapper below so both stay in sync. `--lan` is passed only
+  # when `host` is at its loopback default — mirroring upstream
+  # (`cli-args.js:543` ignores `--lan` under an explicit `--host`, and
+  # `--host` always carries the effective address here anyway).
+  serveArgs = [
+    "${cfg.package}/bin/openchamber"
+    "serve"
+    # Foreground is mandatory under systemd (`Type=simple`
+    # tracks the direct child): without it `serve` daemonizes
+    # and the service would go inactive right after start.
+    # Upstream documents `--foreground` for exactly this setup.
+    "--foreground"
+    "--host"
+    effectiveHost
+    "--port"
+    (toString cfg.port)
+  ]
+  ++ lib.optionals (cfg.lan && cfg.host == "127.0.0.1") [ "--lan" ]
+  ++ lib.optionals (!cfg.enableWebUI) [ "--api-only" ];
   requirePackage =
     name:
     if builtins.hasAttr name extpkgs then
@@ -189,9 +224,17 @@ in
             message = ''services.openchamber: `user` and `group` must be set together — e.g. user = "alice" requires group = "users" (keep both at "openchamber" or customize both).'';
           }
           {
-            # Mirrors upstream `assertAuthenticatedNetworkExposure`: a
-            # network-exposed bind without a UI password throws
-            # AUTH_CONFIG_ERROR at startup — catch it at evaluation instead.
+            # Mirrors upstream `assertAuthenticatedNetworkExposure`
+            # (`bin/lib/cli-network.js:156`, enforced CLI-side at
+            # `bin/lib/commands-serve.js:120` and server-side at
+            # `server/index.js:1625` with the same two escape hatches:
+            # a configured UI password or
+            # `OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN=true`): a
+            # network-exposed bind without either throws upstream —
+            # catch it at evaluation instead. `uiPasswordFile` counts
+            # because the wrapper below exports its content as
+            # `OPENCHAMBER_UI_PASSWORD` (upstream's real mechanism —
+            # there is no `*_PASSWORD_FILE` var at the pinned rev).
             assertion = isLoopbackHost || cfg.uiPasswordFile != null || cfg.allowUnauthenticatedLan;
             message = ''services.openchamber: host "${effectiveHost}" is reachable on the network — set `uiPasswordFile` (recommended) or `allowUnauthenticatedLan = true` to accept the risk (upstream refuses to bind without UI auth).'';
           }
@@ -204,12 +247,7 @@ in
             # out with `installCliForUser = false`.
             # NOTE: reading the merged account VALUE here is safe — only
             # gating a `users.users` key on it would recurse.
-            assertion =
-              let
-                account = config.users.users.${cfg.user} or null;
-                accountDefined = account != null && (account.isNormalUser || account.isSystemUser);
-              in
-              isSystemUser || !cfg.installCliForUser || accountDefined;
+            assertion = isSystemUser || !cfg.installCliForUser || accountDefined;
             message = ''services.openchamber: user "${cfg.user}" is not defined in this evaluation — define it (e.g. users.users."${cfg.user}".isNormalUser = true) or set `installCliForUser = false` when the account is managed externally (LDAP/SSSD).'';
           }
         ];
@@ -230,6 +268,15 @@ in
         users.groups = lib.mkIf (cfg.group == "openchamber") {
           openchamber = { };
         };
+
+        # A custom `dataDir` outside `/var/lib/openchamber` is not covered
+        # by `StateDirectory` below — create it before start while the
+        # service account is known to this evaluation. An
+        # externally-managed account (LDAP/SSSD, ...) must pre-create the
+        # directory itself with correct ownership (see `dataDir` docs).
+        systemd.tmpfiles.rules = lib.mkIf (
+          toString cfg.dataDir != "/var/lib/openchamber" && accountDefined
+        ) [ "d ${toString cfg.dataDir} 0750 ${cfg.user} ${cfg.group} -" ];
 
         systemd.services.openchamber = {
           description = "OpenChamber server";
@@ -253,7 +300,8 @@ in
             OPENCHAMBER_CHATS_DIR = toString cfg.chatsDir;
           }
           // lib.optionalAttrs cfg.allowUnauthenticatedLan {
-            # Strict `=== 'true'` comparison upstream — no `1` shorthand.
+            # Strict `=== 'true'` comparison upstream
+            # (`server/lib/security/bind-host.js:35`) — no `1` shorthand.
             OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN = "true";
           }
           // lib.optionalAttrs (cfg.opencodeHost != null) {
@@ -263,8 +311,11 @@ in
             OPENCODE_PORT = toString cfg.opencodePort;
           }
           // lib.optionalAttrs cfg.skipOpencodeStart {
-            # Server checks both with strict `=== 'true'`; setting both is
-            # harmless (same flag/env pairing pattern as `--api-only`).
+            # Server checks both with strict `=== 'true'`
+            # (`server/index.js:641`; the serve launcher itself forwards
+            # one into the other at `bin/lib/commands-serve.js:291).
+            # Setting both is harmless (same flag/env pairing pattern as
+            # `--api-only`).
             OPENCODE_SKIP_START = "true";
             OPENCHAMBER_SKIP_OPENCODE_START = "true";
           }
@@ -290,30 +341,31 @@ in
             XDG_STATE_HOME = "${cfg.dataDir}/.local/state";
             XDG_CACHE_HOME = "${cfg.dataDir}/.cache";
             OPENCHAMBER_DATA_DIR = "${cfg.dataDir}/.config/openchamber";
-          }
-          // lib.optionalAttrs (cfg.uiPasswordFile != null) {
-            # Staged via LoadCredential below so the service never needs
-            # direct read access to the raw host path (e.g. /run/secrets).
-            OPENCHAMBER_UI_PASSWORD_FILE = "/run/credentials/openchamber.service/ui-password";
           };
           serviceConfig = {
-            ExecStart = lib.escapeShellArgs (
-              [
-                "${cfg.package}/bin/openchamber"
-                "serve"
-                # Foreground is mandatory under systemd (`Type=simple`
-                # tracks the direct child): without it `serve` daemonizes
-                # and the service would go inactive right after start.
-                # Upstream documents `--foreground` for exactly this setup.
-                "--foreground"
-                "--host"
-                effectiveHost
-                "--port"
-                (toString cfg.port)
-              ]
-              ++ lib.optionals cfg.lan [ "--lan" ]
-              ++ lib.optionals (!cfg.enableWebUI) [ "--api-only" ]
-            );
+            ExecStart =
+              if cfg.uiPasswordFile == null then
+                lib.escapeShellArgs serveArgs
+              else
+                # Upstream reads only `--ui-password` /
+                # `OPENCHAMBER_UI_PASSWORD` (`bin/lib/cli-args.js:61`,
+                # `server/index.js:1622`) — no `*_FILE` var exists, so the
+                # LoadCredential-staged secret is exported into the real
+                # env var here. A wrapper (not `EnvironmentFile`) keeps
+                # the secret out of the world-readable store and out of
+                # `/proc` cmdlines (`--ui-password` on argv would leak).
+                # Fails fast on an empty credential instead of serving
+                # an unprotected network bind.
+                "${pkgs.writeShellScript "openchamber-serve" ''
+                  set -euo pipefail
+                  credential="$CREDENTIALS_DIRECTORY/ui-password"
+                  if [ ! -s "$credential" ]; then
+                    echo "openchamber: UI password credential is empty or missing: $credential" >&2
+                    exit 1
+                  fi
+                  export OPENCHAMBER_UI_PASSWORD="$(cat "$credential")"
+                  exec ${lib.escapeShellArgs serveArgs}
+                ''}";
             Restart = "on-failure";
             User = cfg.user;
             Group = cfg.group;
@@ -349,17 +401,26 @@ in
         in
         {
           # Freeform settings (default `{}` = this block vanishes, behavior
-          # unchanged). Confirm the exact flag/env contract against
-          # `openchamber serve --help` for your pinned version; the JSON
-          # file path itself is stable.
+          # unchanged). Upstream has no settings env var or `serve` flag —
+          # the live document is `$OPENCHAMBER_DATA_DIR/settings.json`
+          # (`server/index.js:320`, rooted at `OPENCHAMBER_DATA_DIR` or
+          # `~/.config/openchamber`), so seed it before every start. Runs
+          # as the service user, so `$HOME` resolves for personal-user
+          # instances while `OPENCHAMBER_DATA_DIR` covers the default
+          # system user. Declarative settings win on every (re)start:
+          # edits made through the running UI are overwritten — keep them
+          # in Nix instead.
           # NOTE: the store copy is world-readable — never put secrets in
           # `settings`; use `uiPasswordFile` / credentials for secrets.
-          environment.etc."openchamber/settings.json" = {
-            source = settingsFile;
-            mode = "0440";
-          };
-          systemd.services.openchamber.environment.OPENCHAMBER_SETTINGS_FILE =
-            "/etc/openchamber/settings.json";
+          systemd.services.openchamber.serviceConfig.ExecStartPre = [
+            "${pkgs.writeShellScript "openchamber-install-settings" ''
+              set -euo pipefail
+              dest="''${OPENCHAMBER_DATA_DIR:-$HOME/.config/openchamber}/settings.json"
+              mkdir -p "$(dirname "$dest")"
+              cp -f ${settingsFile} "$dest"
+              chmod 0600 "$dest"
+            ''}"
+          ];
         }
       ))
     ]

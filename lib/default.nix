@@ -72,6 +72,13 @@ lib.makeExtensible (_final: {
         (`<dataDir>/.config/openchamber`). When `user` points at an existing
         login account, HOME/XDG are inherited from that account instead, so
         personal-user instances keep using `~/.config/openchamber` etc.
+
+        A custom directory outside `/var/lib/openchamber` is created via
+        tmpfiles.d (owned by the service user/group) while the service
+        account is defined in this evaluation. When `user` names an
+        externally-managed account (LDAP/SSSD, ...), the directory must
+        pre-exist with correct ownership — tmpfiles cannot chown to an
+        account NixOS never defines.
       '';
     };
 
@@ -112,8 +119,14 @@ lib.makeExtensible (_final: {
   /**
     Standard UI password-file option for `services.openchamber`.
 
-    The file is staged via `LoadCredential` so the service never needs
-    direct read access to the raw host path; it is never copied into the store.
+    Upstream has NO `*_PASSWORD_FILE` mechanism (verified at the pinned
+    rev: `packages/web` reads only `--ui-password` /
+    `OPENCHAMBER_UI_PASSWORD` — `bin/lib/cli-args.js:61,192`,
+    `bin/lib/commands-serve.js:162,289`,
+    `server/index.js:1622`, `server/lib/opencode/cli-options.js:10`).
+    The file is therefore staged via `LoadCredential` and its content
+    exported as `OPENCHAMBER_UI_PASSWORD` by a service wrapper at start;
+    it is never copied into the store.
 
     # Arguments
 
@@ -126,16 +139,18 @@ lib.makeExtensible (_final: {
     lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       inherit default;
-      description = "File containing the UI password (passed as OPENCHAMBER_UI_PASSWORD_FILE).";
+      description = "File containing the UI password (staged via LoadCredential, exported as OPENCHAMBER_UI_PASSWORD at service start — upstream's real auth mechanism).";
     };
 
   /**
     Standard flag allowing unauthenticated LAN binds for `services.openchamber`.
 
-    Mirrors upstream `OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN=true` (the escape
-    hatch for `assertAuthenticatedNetworkExposure`: a network-exposed bind
-    without a UI password throws `AUTH_CONFIG_ERROR` unless this is set).
-    Prefer `uiPasswordFile`; enable this only to consciously accept the risk.
+    Verified against the pinned upstream rev:
+    `server/lib/security/bind-host.js:35` (`isUnsafeUnauthenticatedLanAllowed`
+    checks `OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN === 'true'`), honored by
+    both the CLI pre-flight (`bin/lib/cli-network.js:156`) and the server
+    gate (`server/index.js:1625`). Prefer `uiPasswordFile`; enable this
+    only to consciously accept the risk.
 
     # Arguments
 
@@ -198,8 +213,9 @@ lib.makeExtensible (_final: {
       description = ''
         Bind all interfaces (`0.0.0.0`) when `host` is left at its loopback
         default — the Nix equivalent of `openchamber serve --lan` (the flag
-        is also passed on the command line; `--host` always carries the
-        effective address).
+        itself is passed only in that case, mirroring upstream
+        `bin/lib/cli-args.js:543`, which ignores `--lan` under an explicit
+        `--host`; `--host` always carries the effective address).
 
         A network-exposed bind requires `uiPasswordFile` (or
         `allowUnauthenticatedLan`) — evaluation fails fast otherwise,
@@ -306,9 +322,12 @@ lib.makeExtensible (_final: {
 
     Skips starting (and stopping) the managed OpenCode subprocess and uses
     an external server instead (`OPENCODE_SKIP_START=true` plus
-    `OPENCHAMBER_SKIP_OPENCODE_START=true`; upstream honors either, both
-    are set — harmless, like the `--api-only` flag/env pairing). Combine
-    with `opencodeHost` / `opencodePort`.
+    `OPENCHAMBER_SKIP_OPENCODE_START=true`; the server honors either
+    (`server/index.js:641`, strict `=== 'true'` both) and the serve
+    launcher itself forwards one into the other
+    (`bin/lib/commands-serve.js:291`) — setting both is harmless, like the
+    `--api-only` flag/env pairing). Combine with `opencodeHost` /
+    `opencodePort`.
 
     # Arguments
 
@@ -369,13 +388,16 @@ lib.makeExtensible (_final: {
         Freeform OpenChamber settings, serialized to JSON.
 
         Empty by default (service behavior unchanged). When non-empty,
-        the module writes `/etc/openchamber/settings.json` and points
-        the service at it — confirm the exact flag/env contract against
-        `openchamber serve --help` for your pinned version.
+        the module seeds the live settings document
+        (`$OPENCHAMBER_DATA_DIR/settings.json` — the only settings path
+        the pinned upstream reads: `server/index.js:320`, rooted at
+        `OPENCHAMBER_DATA_DIR` or `~/.config/openchamber`; upstream has no
+        settings env var or `serve` flag) via `ExecStartPre` on every
+        (re)start, so declarative settings win over edits made through
+        the running UI.
 
         Never put secrets in settings: the generated file lives in the
-        world-readable Nix store (the `/etc` copy is mode `0440`, but the
-        store copy stays readable). Use password-file / credential options
+        world-readable Nix store. Use password-file / credential options
         for secrets.
       '';
     };
