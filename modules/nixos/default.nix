@@ -34,6 +34,24 @@ let
   # default together). Only then does the module force HOME/XDG/data paths
   # under `dataDir`; a custom login `user` inherits that account's HOME.
   isSystemUser = cfg.user == "openchamber";
+  # Effective bind address: `lan` mirrors upstream `serve --lan`, which only
+  # fills in when no explicit `--host` is given — i.e. a loopback-default
+  # `host` becomes `0.0.0.0`, an explicitly customized `host` wins.
+  effectiveHost = if cfg.lan && cfg.host == "127.0.0.1" then "0.0.0.0" else cfg.host;
+  # Loopback forms, mirroring upstream `isLoopbackBindHost` (localhost,
+  # 127/8, ::1, bracketed ::1) for the common spellings; anything else is
+  # treated as network-exposed and needs UI auth (see assertion below).
+  isLoopbackHost =
+    let
+      normalized = lib.toLower effectiveHost;
+    in
+    builtins.elem normalized [
+      "127.0.0.1"
+      "localhost"
+      "::1"
+      "[::1]"
+    ]
+    || lib.hasPrefix "127." normalized;
   requirePackage =
     name:
     if builtins.hasAttr name extpkgs then
@@ -72,9 +90,39 @@ in
       '';
     };
 
+    allowUnauthenticatedLan = openchamberLib.mkAllowUnauthenticatedLanOption { };
+
+    chatsDir = openchamberLib.mkChatsDirOption { };
+
     dataDir = openchamberLib.mkDataDirOption { };
 
     host = openchamberLib.mkHostOption { };
+
+    installCliForUser = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether to install the configured `package` into the service
+        account's user packages (`users.users.<user>.packages`), putting
+        the `openchamber` CLI on that account's PATH for pairing and
+        management commands (`openchamber status`, `openchamber tunnel`,
+        ...).
+
+        Disable this when `user` is managed outside this evaluation
+        (LDAP/SSSD, ...): assigning `users.users.<name>.packages`
+        unconditionally would otherwise implicitly CREATE a local account
+        shadowing the external one. Such accounts get the CLI via
+        `nix profile install` / explicit PATH instead.
+      '';
+    };
+
+    lan = openchamberLib.mkLanOption { };
+
+    opencodeHost = openchamberLib.mkOpencodeHostOption { };
+
+    opencodeHostname = openchamberLib.mkOpencodeHostnameOption { };
+
+    opencodePort = openchamberLib.mkOpencodePortOption { };
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -85,7 +133,13 @@ in
 
     port = openchamberLib.mkPortOption { };
 
+    skipApiCompression = openchamberLib.mkSkipApiCompressionOption { };
+
+    skipOpencodeStart = openchamberLib.mkSkipOpencodeStartOption { };
+
     uiPasswordFile = openchamberLib.mkPasswordFileOption { };
+
+    verboseRequestLogs = openchamberLib.mkVerboseRequestLogsOption { };
 
     user = lib.mkOption {
       type = lib.types.nonEmptyStr;
@@ -134,6 +188,30 @@ in
             assertion = isSystemUser == (cfg.group == "openchamber");
             message = ''services.openchamber: `user` and `group` must be set together — e.g. user = "alice" requires group = "users" (keep both at "openchamber" or customize both).'';
           }
+          {
+            # Mirrors upstream `assertAuthenticatedNetworkExposure`: a
+            # network-exposed bind without a UI password throws
+            # AUTH_CONFIG_ERROR at startup — catch it at evaluation instead.
+            assertion = isLoopbackHost || cfg.uiPasswordFile != null || cfg.allowUnauthenticatedLan;
+            message = ''services.openchamber: host "${effectiveHost}" is reachable on the network — set `uiPasswordFile` (recommended) or `allowUnauthenticatedLan = true` to accept the risk (upstream refuses to bind without UI auth).'';
+          }
+          {
+            # Fail fast when a custom `user` names an account this
+            # evaluation never defines (e.g. LDAP/SSSD): installing CLI
+            # packages would otherwise implicitly create a local shadow
+            # account (or trip nixpkgs' own user-completion assertions).
+            # Either define the account (the `alice`/`users` case) or opt
+            # out with `installCliForUser = false`.
+            # NOTE: reading the merged account VALUE here is safe — only
+            # gating a `users.users` key on it would recurse.
+            assertion =
+              let
+                account = config.users.users.${cfg.user} or null;
+                accountDefined = account != null && (account.isNormalUser || account.isSystemUser);
+              in
+              isSystemUser || !cfg.installCliForUser || accountDefined;
+            message = ''services.openchamber: user "${cfg.user}" is not defined in this evaluation — define it (e.g. users.users."${cfg.user}".isNormalUser = true) or set `installCliForUser = false` when the account is managed externally (LDAP/SSSD).'';
+          }
         ];
 
         # Static service account (created only while the defaults are
@@ -145,6 +223,8 @@ in
             isSystemUser = true;
             inherit (cfg) group;
             description = "OpenChamber server";
+            # CLI on PATH for the default account (pairing/management).
+            packages = lib.optionals cfg.installCliForUser [ cfg.package ];
           };
         };
         users.groups = lib.mkIf (cfg.group == "openchamber") {
@@ -156,8 +236,11 @@ in
           wantedBy = [ "multi-user.target" ];
           after = [ "network.target" ];
           environment = {
-            OPENCHAMBER_HOST = cfg.host;
+            OPENCHAMBER_HOST = effectiveHost;
             OPENCHAMBER_PORT = toString cfg.port;
+            # Always explicit: matches the upstream default (`127.0.0.1`)
+            # so managed-OpenCode binds stay deterministic.
+            OPENCHAMBER_OPENCODE_HOSTNAME = cfg.opencodeHostname;
           }
           // lib.optionalAttrs (!cfg.enableWebUI) {
             # API-only fallback env (the `--api-only` CLI flag in ExecStart
@@ -165,6 +248,31 @@ in
             # upstream 1.23.0 — `--api-only` in `serve` arg parsing plus
             # `OPENCHAMBER_API_ONLY` (`1`/`true`) in the server entrypoint).
             OPENCHAMBER_API_ONLY = "1";
+          }
+          // lib.optionalAttrs (cfg.chatsDir != null) {
+            OPENCHAMBER_CHATS_DIR = toString cfg.chatsDir;
+          }
+          // lib.optionalAttrs cfg.allowUnauthenticatedLan {
+            # Strict `=== 'true'` comparison upstream — no `1` shorthand.
+            OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN = "true";
+          }
+          // lib.optionalAttrs (cfg.opencodeHost != null) {
+            OPENCODE_HOST = cfg.opencodeHost;
+          }
+          // lib.optionalAttrs (cfg.opencodePort != null) {
+            OPENCODE_PORT = toString cfg.opencodePort;
+          }
+          // lib.optionalAttrs cfg.skipOpencodeStart {
+            # Server checks both with strict `=== 'true'`; setting both is
+            # harmless (same flag/env pairing pattern as `--api-only`).
+            OPENCODE_SKIP_START = "true";
+            OPENCHAMBER_SKIP_OPENCODE_START = "true";
+          }
+          // lib.optionalAttrs cfg.verboseRequestLogs {
+            OPENCHAMBER_VERBOSE_REQUEST_LOGS = "1";
+          }
+          // lib.optionalAttrs cfg.skipApiCompression {
+            OPENCHAMBER_SKIP_API_COMPRESSION = "1";
           }
           // lib.optionalAttrs isSystemUser {
             # Writable pathing for the default system account: systemd
@@ -193,11 +301,17 @@ in
               [
                 "${cfg.package}/bin/openchamber"
                 "serve"
+                # Foreground is mandatory under systemd (`Type=simple`
+                # tracks the direct child): without it `serve` daemonizes
+                # and the service would go inactive right after start.
+                # Upstream documents `--foreground` for exactly this setup.
+                "--foreground"
                 "--host"
-                cfg.host
+                effectiveHost
                 "--port"
                 (toString cfg.port)
               ]
+              ++ lib.optionals cfg.lan [ "--lan" ]
               ++ lib.optionals (!cfg.enableWebUI) [ "--api-only" ]
             );
             Restart = "on-failure";
@@ -219,6 +333,16 @@ in
           };
         };
       }
+      # CLI on PATH for a custom service account (pairing/management
+      # commands like `openchamber status` / `openchamber tunnel` run as
+      # the service user). Gated on static conditions only: testing
+      # `users.users` for the account here would recurse infinitely (the
+      # merge cannot decide its own key set), so an externally-managed
+      # account (LDAP/SSSD) must opt out via `installCliForUser = false`
+      # instead — see that option.
+      (lib.mkIf (cfg.installCliForUser && !isSystemUser) {
+        users.users.${cfg.user}.packages = [ cfg.package ];
+      })
       (lib.mkIf (cfg.settings != { }) (
         let
           settingsFile = jsonFormat.generate "openchamber-settings.json" cfg.settings;

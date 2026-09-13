@@ -118,8 +118,21 @@ NixOS module:
     # group = "users";
     # uiPasswordFile = "/run/secrets/openchamber-password";
     # enableWebUI = false;  # API-only mode: REST API without browser UI assets
+    # lan = true;  # bind 0.0.0.0 (needs uiPasswordFile, or allowUnauthenticatedLan = true)
+    # opencodeHost = "http://hostname:4096";  # external OpenCode server (with skipOpencodeStart = true)
+    # opencodePort = 4096;  # external OpenCode port (ignored when opencodeHost is set)
+    # opencodeHostname = "127.0.0.1";  # bind hostname for the managed OpenCode server
+    # chatsDir = "/var/lib/openchamber-chats";  # relocate managed chat worktrees
+    # verboseRequestLogs = true;  # log every request
+    # skipApiCompression = true;  # skip API response compression
     # settings = { };  # freeform attrs -> /etc/openchamber/settings.json
   };
+  # When enabled, the service account gets the CLI on PATH
+  # (`users.users.<user>.packages`), so it can run `openchamber status` /
+  # pairing / `tunnel` management commands. When `user` is managed outside
+  # the same evaluation (e.g. LDAP/SSSD), set `installCliForUser = false`
+  # (and install the CLI on PATH for that account separately) — otherwise
+  # the module would implicitly create a local account shadowing it.
 }
 ```
 
