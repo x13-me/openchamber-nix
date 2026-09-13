@@ -1,4 +1,4 @@
-name: "Publish every Git push to FlakeHub"
+name: "Publish main to FlakeHub with version tag"
 on:
   push:
     branches:
@@ -14,9 +14,18 @@ jobs:
         with:
           persist-credentials: false
       - uses: "DeterminateSystems/determinate-nix-action@v3"
+      - name: "Read version from versions.nix"
+        id: "version"
+        run: |
+          version="$(nix eval --raw -f versions.nix version)"
+          if [ -z "$version" ]; then
+            echo "versions.nix yielded an empty version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: "DeterminateSystems/flakehub-push@main"
         with:
           name: "x13-me/openchamber-nix"
-          rolling: true
+          tag: "v${{ steps.version.outputs.version }}"
           visibility: "public"
           include-output-paths: true
