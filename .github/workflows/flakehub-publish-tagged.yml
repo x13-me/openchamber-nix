@@ -25,5 +25,5 @@ jobs:
         with:
           visibility: "public"
           name: "x13-me/openchamber-nix"
-          tag: "${{ inputs.tag }}"
+          tag: "${{ inputs.tag || github.ref_name }}"
           include-output-paths: true

@@ -202,17 +202,17 @@ nix build .#checks.x86_64-linux.formatting  # run the formatting check as a deri
   update → auto-commit + tag `v<version>` → 2 packages × 2 systems
   test-build matrix.
 - `build-openchamber.yml` (`workflow_dispatch`) builds the same matrix on demand.
-- `flakehub-publish-rolling.yml` (push to main — reads `version` from
-  `versions.nix` at runtime and publishes explicit tag `v<version>`) and
-  `flakehub-publish-tagged.yml` (`v?[0-9]+.[0-9]+.[0-9]+*` tags / dispatch)
-  publish to FlakeHub as `x13-me/openchamber-nix`. No `rolling` channel —
-  every publish is version-tagged.
+- `flakehub-publish-tagged.yml` (`v?[0-9]+.[0-9]+.[0-9]+*` tags / dispatch)
+  is the single publish path: pushes of `v*` tags (created by the updater
+  on main, plus manual tags/dispatch) publish that version to FlakeHub as
+  `x13-me/openchamber-nix`. Plain main commits do not publish. No `rolling`
+  channel — every publish is version-tagged.
 - Deliberate divergence from helium-nix dual-branch spec: helium tracks
   stable on main plus prereleases on a `rolling` branch (second updater +
   push-to-both publish); this repo collapses to a single `main` branch
   tracking upstream latest only — no `rolling` branch, no rolling updater
-  workflow, no `rolling: true` publish; pushes to `main` publish the
-  checked-in version tag instead.
+  workflow, no `rolling: true` publish, no main-push publish; only tag
+  pushes publish.
   As before, `check.yml` (push to main + PRs,
   both Linux systems: `nix flake check --no-build --all-systems` plus
   `nix fmt -- --ci`) is kept alongside the replicated workflows, as are
