@@ -14,7 +14,7 @@ packages
 └── openchamber-gui-appimage  # alias of openchamber-gui
 apps: openchamber-server, openchamber-gui
 nixosModules.default (+ legacy alias .openchamber)  # services.openchamber
-homeModules.default     # programs.openchamber-gui + programs.openchamber-server
+homeManagerModules.default (+ alias homeModules.default)  # programs.openchamber-gui + programs.openchamber-server
 overlays.default
 devShells (bun + nodejs_22 + git + just + formatter tools)
 checks.formatting       # treefmt --ci
@@ -95,7 +95,7 @@ Home Manager:
 
 ```nix
 { inputs, ... }: {
-  imports = [ inputs.openchamber-nix.homeModules.default ];
+  imports = [ inputs.openchamber-nix.homeManagerModules.default ];
   nixpkgs.overlays = [ inputs.openchamber-nix.overlays.default ];
   programs.openchamber-gui.enable = true;
   programs.openchamber-server.enable = true; # ad-hoc `openchamber serve`
@@ -205,6 +205,7 @@ nix build .#checks.x86_64-linux.formatting  # run the formatting check as a deri
 - `build-openchamber.yml` (`workflow_dispatch` + `pull_request`) builds the same matrix on demand.
 - `check.yml` (push to main + PRs, both Linux systems): `nix flake check
   --no-build --all-systems` plus `nix fmt -- --ci`.
+- `flakehub-publish.yml` triggers on `v*` tags (builds server, then pushes via `fh`).
 - Binary cache: [openchamber](https://app.cachix.org/cache/openchamber) —
   set the `CACHIX_AUTH_TOKEN` secret. Publishing to FlakeHub additionally
   needs `FLAKEHUB_TOKEN`.

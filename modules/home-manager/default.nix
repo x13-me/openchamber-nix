@@ -2,7 +2,7 @@
 #
 # ```nix
 # {
-#   imports = [ inputs.openchamber-nix.homeModules.default ];
+#   imports = [ inputs.openchamber-nix.homeManagerModules.default ];
 #   nixpkgs.overlays = [ inputs.openchamber-nix.overlays.default ];
 #   programs.openchamber-gui.enable = true;
 #   programs.openchamber-server.enable = true; # ad-hoc `openchamber serve`

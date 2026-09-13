@@ -43,9 +43,15 @@ let
   );
 
   formatterFor = pkgs: pkgs.callPackage ./formatter.nix { };
+
+  homeManagerModules = {
+    default = ../modules/home-manager/default.nix;
+  };
+
+  nixosModule = ../modules/nixos/default.nix;
 in
 {
-  inherit packages;
+  inherit homeManagerModules packages;
 
   apps = forAllSystems (
     pkgs:
@@ -124,14 +130,13 @@ in
   formatter = forAllSystems formatterFor;
 
   nixosModules = {
-    default = ../modules/nixos/default.nix;
+    default = nixosModule;
     # Legacy alias (helium-nix compat): `nixosModules.openchamber`.
-    openchamber = ../modules/nixos/default.nix;
+    openchamber = nixosModule;
   };
 
-  homeModules = {
-    default = ../modules/home-manager/default.nix;
-  };
+  # Canonical name is `homeManagerModules`; `homeModules` is a compat alias.
+  homeModules = homeManagerModules;
 
   hydraJobs =
     let
