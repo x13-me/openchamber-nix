@@ -197,15 +197,20 @@ nix build .#checks.x86_64-linux.formatting  # run the formatting check as a deri
   annotated tags to the commit SHA, prefetches the source NAR hash plus
   both AppImage hashes, rewrites `versions.nix`, and runs
   `nix flake update` (only under `--ci` on the update path).
-- `update-openchamber-main.yml` (`32 * * * *`) and
-  `update-openchamber-rolling.yml` (`33 * * * *`, staggered): `--only-check`
-  gates, then update → auto-commit (tag `v<version>` on main only) →
-  2 packages × 2 systems test-build matrix.
+- `update-openchamber-main.yml` (`32 * * * *`, hourly) is the single updater:
+  `main` follows the upstream latest release — `--only-check` gates, then
+  update → auto-commit + tag `v<version>` → 2 packages × 2 systems
+  test-build matrix.
 - `build-openchamber.yml` (`workflow_dispatch`) builds the same matrix on demand.
-- `flakehub-publish-rolling.yml` (push to main/rolling) and
+- `flakehub-publish-rolling.yml` (push to main) and
   `flakehub-publish-tagged.yml` (`v?[0-9]+.[0-9]+.[0-9]+*` tags / dispatch)
   publish to FlakeHub as `x13-me/openchamber-nix`.
-- Deliberate divergence from helium-nix: `check.yml` (push to main + PRs,
+- Deliberate divergence from helium-nix dual-branch spec: helium tracks
+  stable on main plus prereleases on a `rolling` branch (second updater +
+  push-to-both publish); this repo collapses to a single `main` branch
+  tracking upstream latest only — no `rolling` branch, no rolling updater
+  workflow, FlakeHub rolling publish triggers on `main` pushes only.
+  As before, `check.yml` (push to main + PRs,
   both Linux systems: `nix flake check --no-build --all-systems` plus
   `nix fmt -- --ci`) is kept alongside the replicated workflows, as are
   the flake's `checks` / `devShells` / formatter / modules.

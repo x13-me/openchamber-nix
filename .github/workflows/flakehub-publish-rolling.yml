@@ -3,7 +3,6 @@ on:
   push:
     branches:
       - "main"
-      - "rolling"
 jobs:
   flakehub-publish:
     runs-on: "ubuntu-latest"
