@@ -17,7 +17,6 @@ let
     # keep-sorted start
     "openchamber-gui"
     "openchamber-server"
-    "openchamber-web"
     # keep-sorted end
   ];
 

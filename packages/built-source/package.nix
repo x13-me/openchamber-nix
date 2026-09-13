@@ -1,8 +1,7 @@
 # Internal shared source build: bun install + UI lib build + vite web build.
 #
-# NOT exposed in `packages` output; `openchamber-server` / `openchamber-web`
-# take it as the `builtSource` callPackage argument (wired in
-# `packages/default.nix` scope and `nix/overlay.nix` alike).
+# NOT exposed in `packages` output; `openchamber-server` takes it as the
+# `builtSource` callPackage argument (wired in `packages/default.nix` scope and `nix/overlay.nix` alike).
 #
 # NOTE: the build phase needs network (bun registry). Build with
 # `--option sandbox false` if your builder denies network access.

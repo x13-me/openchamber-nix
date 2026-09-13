@@ -2,14 +2,13 @@
 
 Nix flake packaging [OpenChamber](https://github.com/openchamber/openchamber)
 (Bun workspaces monorepo: Express server + React 19 web UI + Electron 41 GUI)
-with three packages, following the [helium-nix](https://github.com/x13-me/helium-nix) pattern.
+with two packages, following the [helium-nix](https://github.com/x13-me/helium-nix) pattern.
 
 ## Flake outputs
 
 ```
 packages
-├── openchamber-server   # node wrapper around packages/web bin/cli (default)
-├── openchamber-web      # static web UI assets (packages/web/dist)
+├── openchamber-server   # node wrapper around packages/web bin/cli (default, serves builtin web UI)
 ├── openchamber-gui      # prebuilt Electron AppImage via wrapType2
 └── openchamber-gui-appimage  # alias of openchamber-gui
 apps: openchamber-server, openchamber-gui
@@ -35,10 +34,9 @@ nix/
 ├── overlay.nix            # system-independent _: prev: + prev.callPackage only
 └── formatter.nix          # treefmt.withConfig (nixpkgs only, no extra inputs)
 packages/
-├── default.nix            # makeScope scope (server/web share builtSource)
+├── default.nix            # makeScope scope (server uses builtSource)
 ├── built-source/package.nix       # internal: bun install + ui/web build
 ├── openchamber-server/package.nix # callPackage-compatible, no outer pkgs capture
-├── openchamber-web/package.nix
 └── openchamber-gui/package.nix
 modules/
 ├── nixos/default.nix      # _class="nixos", services.openchamber
@@ -133,8 +131,9 @@ Without the overlay, inject the flake's package set instead:
   wrapped with `nodejs_22` and `opencode`, `git`, `openssh`, `bash` on
   `PATH`, plus `SSL_CERT_FILE` pointed at the Nix `cacert` bundle.
   Default port 3000, `OPENCHAMBER_*` env supported.
-- **Web UI** (`openchamber-web`): `dist/` assets only, no runtime deps —
-  serve with any static server.
+- **Web UI**: embedded `dist/` assets inside `openchamber-server` — the
+  builtin Express server is required; there is no standalone static
+  package (nginx-alone would serve a dead shell).
 - **GUI** (`openchamber-gui`): upstream Linux AppImage repackaged with
   `appimageTools.wrapType2`, desktop entry `Exec` fixed, icons installed.
 - **No self-update**: electron-updater is meaningless for immutable store
@@ -144,7 +143,6 @@ Without the overlay, inject the flake's package set instead:
 
 ```bash
 nix build .#openchamber-server   # needs network in builder (bun registry)
-nix build .#openchamber-web
 nix build .#openchamber-gui
 ```
 
@@ -156,7 +154,7 @@ nix build .#openchamber-server --option sandbox false
 
 ### Why builds need network (why can't you just build?)
 
-The server/web packages compile upstream's Bun workspace from source
+The server package compiles upstream's Bun workspace from source
 (`packages/built-source/package.nix`): `bun install --frozen-lockfile`
 downloads dependencies from the bun/npm registry at *build* time, and
 `vite build` may fetch remote fonts/assets. Nix derivations are pure by
@@ -172,7 +170,7 @@ Your options, in order of preference:
    runners work — that is why CI uses native `ubuntu-24.04` /
    `ubuntu-24.04-arm` runners instead of sandbox-relaxed builds).
 2. Locally, relax the sandbox for that invocation only:
-   `nix build .#openchamber-web --option sandbox false`.
+    `nix build .#openchamber-server --option sandbox false`.
 3. The GUI package (`openchamber-gui`) never needs this: it repackages
    the upstream AppImage via fixed-output `fetchurl`, which is pure.
 
@@ -199,7 +197,7 @@ nix build .#checks.x86_64-linux.formatting  # run the formatting check as a deri
   `versions.nix`, and runs `nix flake update`.
 - `update-openchamber.yml` runs hourly (`32 * * * *`): `--only-check`
   gates, then a single `prepare-update` job runs the updater once and
-  shares `versions.nix` + `flake.lock` with the 3 packages × 2 systems
+  shares `versions.nix` + `flake.lock` with the 2 packages × 2 systems
   test-build matrix (native runners, `nix build` + `nix flake check`
   only) via artifact, then commits and tags `v<version>`.
 - `build-openchamber.yml` (`workflow_dispatch` + `pull_request`) builds the same matrix on demand.

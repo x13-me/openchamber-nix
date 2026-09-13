@@ -18,8 +18,4 @@ in
   openchamber-server = prev.callPackage ../packages/openchamber-server/package.nix {
     inherit builtSource;
   };
-
-  openchamber-web = prev.callPackage ../packages/openchamber-web/package.nix {
-    inherit builtSource;
-  };
 }

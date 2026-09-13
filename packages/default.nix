@@ -1,4 +1,4 @@
-# Package scope: `makeScope` lets server/web share the internal
+# Package scope: `makeScope` lets openchamber-server share the internal
 # built-source build via `self.callPackage`.
 #
 # `builtSource` is intentionally internal — `nix/default.nix` strips it
@@ -14,10 +14,6 @@ pkgs.lib.makeScope pkgs.newScope (self: {
   openchamber-gui = self.callPackage ./openchamber-gui/package.nix { };
 
   openchamber-server = self.callPackage ./openchamber-server/package.nix {
-    inherit (self) builtSource;
-  };
-
-  openchamber-web = self.callPackage ./openchamber-web/package.nix {
     inherit (self) builtSource;
   };
 })
