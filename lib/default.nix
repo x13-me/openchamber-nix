@@ -79,8 +79,8 @@ lib.makeExtensible (_final: {
   /**
     Standard UI password-file option for `services.openchamber`.
 
-    The file is staged via `LoadCredential` so it stays readable under
-    `DynamicUser`; it is never copied into the store.
+    The file is staged via `LoadCredential` so the service never needs
+    direct read access to the raw host path; it is never copied into the store.
 
     # Arguments
 

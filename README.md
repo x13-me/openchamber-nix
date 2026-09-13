@@ -110,6 +110,11 @@ NixOS module:
     enable = true;
     port = 3000;
     host = "127.0.0.1";
+    # Runs as a dedicated `openchamber` system user by default. To give the
+    # server direct access to your HOME, ~/.ssh, git config, and workspace
+    # files, run it as your login user instead:
+    # user = "youruser";
+    # group = "users";
     # uiPasswordFile = "/run/secrets/openchamber-password";
     # settings = { };  # freeform attrs -> /etc/openchamber/settings.json
   };

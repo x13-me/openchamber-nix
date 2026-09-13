@@ -61,6 +61,33 @@ in
     port = openchamberLib.mkPortOption { };
 
     uiPasswordFile = openchamberLib.mkPasswordFileOption { };
+
+    user = lib.mkOption {
+      type = lib.types.str;
+      default = "openchamber";
+      description = ''
+        User the service runs as.
+
+        When left at the default, a system user is created automatically.
+        Set it to an existing login user (e.g. your own account) to give
+        the server direct access to that user's HOME, ~/.ssh, git config,
+        and workspace files — the service wraps opencode/git/openssh and
+        needs real filesystem access, so it must not run isolated.
+      '';
+    };
+
+    group = lib.mkOption {
+      type = lib.types.str;
+      default = "openchamber";
+      description = ''
+        Group the service runs as.
+
+        When left at the default, the group is created automatically.
+        When customizing `user` to an existing account, set this to that
+        account's primary group (commonly `users`) and manage the group
+        yourself.
+      '';
+    };
     # NOTE: `settings` comes from `modules/generic/settings.nix` (imported
     # above). No keep-sorted markers on this set on purpose — keep-sorted
     # sorts raw lines and would scramble multi-line option definitions.
@@ -69,6 +96,21 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
+        # Static service account (created only while the defaults are
+        # used). A custom `user`/`group` must already exist — e.g. point
+        # `user` at your login account so the server can reach HOME,
+        # ~/.ssh, git config, and workspace files.
+        users.users = lib.mkIf (cfg.user == "openchamber") {
+          openchamber = {
+            isSystemUser = true;
+            inherit (cfg) group;
+            description = "OpenChamber server";
+          };
+        };
+        users.groups = lib.mkIf (cfg.group == "openchamber") {
+          openchamber = { };
+        };
+
         systemd.services.openchamber = {
           description = "OpenChamber server";
           wantedBy = [ "multi-user.target" ];
@@ -78,7 +120,8 @@ in
             OPENCHAMBER_PORT = toString cfg.port;
           }
           // lib.optionalAttrs (cfg.uiPasswordFile != null) {
-            # Staged via LoadCredential below so it stays readable under DynamicUser.
+            # Staged via LoadCredential below so the service never needs
+            # direct read access to the raw host path (e.g. /run/secrets).
             OPENCHAMBER_UI_PASSWORD_FILE = "/run/credentials/openchamber.service/ui-password";
           };
           serviceConfig = {
@@ -91,13 +134,15 @@ in
               (toString cfg.port)
             ];
             Restart = "on-failure";
-            DynamicUser = true;
+            User = cfg.user;
+            Group = cfg.group;
+            # Owned by User:Group; keeps state across upgrades.
             StateDirectory = "openchamber";
           }
           // lib.optionalAttrs (cfg.uiPasswordFile != null) {
-            # LoadCredential stages the secret where DynamicUser can read
-            # it; the raw host path (e.g. /run/secrets) may not be
-            # accessible to the sandboxed service user otherwise.
+            # LoadCredential stages the secret where the static service
+            # user can read it; the raw host path may not be accessible
+            # to it otherwise.
             LoadCredential = [ "ui-password:${cfg.uiPasswordFile}" ];
           };
         };
