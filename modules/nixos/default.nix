@@ -63,8 +63,9 @@ in
     uiPasswordFile = openchamberLib.mkPasswordFileOption { };
 
     user = lib.mkOption {
-      type = lib.types.str;
+      type = lib.types.nonEmptyStr;
       default = "openchamber";
+      example = "alice";
       description = ''
         User the service runs as.
 
@@ -73,12 +74,16 @@ in
         the server direct access to that user's HOME, ~/.ssh, git config,
         and workspace files — the service wraps opencode/git/openssh and
         needs real filesystem access, so it must not run isolated.
+
+        Must be customized together with `group` (see also `group`):
+        e.g. `user = "alice"` requires `group = "users"`.
       '';
     };
 
     group = lib.mkOption {
-      type = lib.types.str;
+      type = lib.types.nonEmptyStr;
       default = "openchamber";
+      example = "users";
       description = ''
         Group the service runs as.
 
@@ -96,6 +101,16 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
+        # Fail fast when only one of `user`/`group` leaves the default:
+        # a half-customized identity would run the service under a
+        # nonexistent or mismatched account.
+        assertions = [
+          {
+            assertion = (cfg.user == "openchamber") == (cfg.group == "openchamber");
+            message = ''services.openchamber: `user` and `group` must be set together — e.g. user = "alice" requires group = "users" (keep both at "openchamber" or customize both).'';
+          }
+        ];
+
         # Static service account (created only while the defaults are
         # used). A custom `user`/`group` must already exist — e.g. point
         # `user` at your login account so the server can reach HOME,
