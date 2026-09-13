@@ -189,21 +189,26 @@ nix build .#checks.x86_64-linux.formatting  # run the formatting check as a deri
 
 - `versions.nix` is the single machine-updated file
   (`version`, `rev`, `srcHash`, per-system AppImage hashes).
-- `.github/update-openchamber.sh` mirrors `update-helium.sh`: `--only-check`
-  gates on the latest stable release (`gh release view`, equivalent to
-  `releases/latest`, prereleases excluded), otherwise validates the
-  version format, dereferences annotated tags to the commit SHA,
-  prefetches the source NAR hash plus both AppImage hashes, rewrites
-  `versions.nix`, and runs `nix flake update`.
-- `update-openchamber.yml` runs hourly (`32 * * * *`): `--only-check`
-  gates, then a single `prepare-update` job runs the updater once and
-  shares `versions.nix` + `flake.lock` with the 2 packages × 2 systems
-  test-build matrix (native runners, `nix build` + `nix flake check`
-  only) via artifact, then commits and tags `v<version>`.
-- `build-openchamber.yml` (`workflow_dispatch` + `pull_request`) builds the same matrix on demand.
-- `check.yml` (push to main + PRs, both Linux systems): `nix flake check
-  --no-build --all-systems` plus `nix fmt -- --ci`.
-- `flakehub-publish.yml` triggers on `v*` tags (builds server, then pushes via `fh`).
+- `.github/update-openchamber.sh` mirrors `update-helium.sh` (`--ci` /
+  `--only-check` flags, `should_update` / `version` / `commit_message`
+  outputs, `GH_TOKEN` auth, retry-on-404, `nix store prefetch-file` +
+  conditional `nix flake update`): polls `releases/latest` (stable only,
+  prereleases excluded), validates the version format, dereferences
+  annotated tags to the commit SHA, prefetches the source NAR hash plus
+  both AppImage hashes, rewrites `versions.nix`, and runs
+  `nix flake update` (only under `--ci` on the update path).
+- `update-openchamber-main.yml` (`32 * * * *`) and
+  `update-openchamber-rolling.yml` (`33 * * * *`, staggered): `--only-check`
+  gates, then update → auto-commit (tag `v<version>` on main only) →
+  2 packages × 2 systems test-build matrix.
+- `build-openchamber.yml` (`workflow_dispatch`) builds the same matrix on demand.
+- `flakehub-publish-rolling.yml` (push to main/rolling) and
+  `flakehub-publish-tagged.yml` (`v?[0-9]+.[0-9]+.[0-9]+*` tags / dispatch)
+  publish to FlakeHub as `x13-me/openchamber-nix`.
+- Deliberate divergence from helium-nix: `check.yml` (push to main + PRs,
+  both Linux systems: `nix flake check --no-build --all-systems` plus
+  `nix fmt -- --ci`) is kept alongside the replicated workflows, as are
+  the flake's `checks` / `devShells` / formatter / modules.
 - Binary cache: [openchamber](https://app.cachix.org/cache/openchamber) —
-  set the `CACHIX_AUTH_TOKEN` secret. Publishing to FlakeHub additionally
-  needs `FLAKEHUB_TOKEN`.
+  set the `CACHIX_AUTH_TOKEN` secret. Publishing to FlakeHub uses OIDC
+  (`id-token: write`), no extra secret needed.

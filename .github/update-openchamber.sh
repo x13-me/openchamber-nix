@@ -1,86 +1,227 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Update versions.nix from upstream openchamber/openchamber releases.
-# Usage: update-openchamber.sh [--only-check]
-#   --only-check: exit 0 with GITHUB_OUTPUT should_update=true/false, no changes.
-set -euo pipefail
+# Usage: update-openchamber.sh [--ci] [--only-check]
+#   --ci: enable CI mode (run `nix flake update`, append outputs to $GITHUB_OUTPUT).
+#   --only-check: dry-run, emit should_update, exit without mutating anything.
+# Contract mirrors helium-nix .github/update-helium.sh; upstream-specific
+# parts are adapted for openchamber/openchamber (Linux AppImages per arch
+# plus git source rev/srcHash). versions.nix stays the sole version source.
 
-REPO="openchamber/openchamber"
-VERSIONS_FILE="$(dirname "$0")/../versions.nix"
-ONLY_CHECK=false
-[[ "${1:-}" == "--only-check" ]] && ONLY_CHECK=true
+repo="openchamber/openchamber"
+api_base="https://api.github.com/repos/${repo}"
 
-# Latest stable release (excludes prereleases/drafts), matching releases/latest.
-latest_tag="$(gh release view -R "$REPO" --json tagName --jq .tagName)"
-current_version="$(nix eval --impure --expr "(import ./${VERSIONS_FILE}).version" --raw)"
-
-commit_message="chore: update openchamber to ${latest_tag}"
-echo "Latest upstream: ${latest_tag}, current: ${current_version}"
-
-if [[ "$latest_tag" == "$current_version" || "v${current_version}" == "$latest_tag" ]]; then
-  echo "Already up to date."
-  [[ -n "${GITHUB_OUTPUT:-}" ]] && echo "should_update=false" >> "$GITHUB_OUTPUT"
-  exit 0
+ci=false
+if echo "$@" | grep -qoE '(--ci)'; then
+    ci=true
 fi
 
-if $ONLY_CHECK; then
-  [[ -n "${GITHUB_OUTPUT:-}" ]] && {
-    echo "should_update=true" >> "$GITHUB_OUTPUT"
-    echo "version=${latest_tag}" >> "$GITHUB_OUTPUT"
-    echo "commit_message=${commit_message}" >> "$GITHUB_OUTPUT"
-  }
-  exit 0
+only_check=false
+if echo "$@" | grep -qoE '(--only-check)'; then
+    only_check=true
 fi
 
-version="${latest_tag#v}"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || {
-  echo "Unexpected version format: ${version} (from tag ${latest_tag})" >&2
-  exit 1
+with_retry() {
+    retries=5
+    count=0
+    output=""
+    status=0
+
+    while [ $count -lt $retries ]; do
+        output=$("$@" 2>&1)
+        status=$?
+
+        if echo "$output" | grep -q 'Not Found'; then
+            count=$((count + 1))
+            echo "attempt $count/$retries: 404 Not Found encountered, retrying..." >&2
+            sleep 1
+        else
+            echo "[TRACE] [cmd=$*] output: $output" 1>&2
+            echo "$output" | tr -d '\000-\037'
+            return $status
+        fi
+    done
+
+    echo "max retries reached. last output: $output (cmd=$*)" >&2
+    exit 1
 }
 
-# Resolve the tag ref. Annotated tags point at a tag object rather than a
-# commit, so dereference to the commit SHA before pinning rev.
-ref_json="$(gh api "repos/${REPO}/git/ref/tags/${latest_tag}")"
-rev="$(jq -r .object.sha <<<"$ref_json")"
-if [[ "$(jq -r .object.type <<<"$ref_json")" == "tag" ]]; then
-  rev="$(gh api "repos/${REPO}/git/tags/${rev}" --jq .object.sha)"
-fi
-[[ -n "${rev:-}" ]] || {
-  echo "Failed to resolve tag ${latest_tag} to a commit SHA" >&2
-  exit 1
+api_get() {
+    if [ -n "$GH_TOKEN" ]; then
+        echo "ATTEMPTING WITH TOKEN" 1>&2
+        with_retry curl -s -H "Authorization: Bearer ${GH_TOKEN}" "$1"
+    else
+        echo "GH_TOKEN NOT SET!!!!!!!" 1>&2
+        with_retry curl -s "$1"
+    fi
 }
-src_hash="$(nix store prefetch-file --unpack --json "https://github.com/${REPO}/archive/${rev}.tar.gz" | jq -r .hash)"
 
-declare -A arch_map=( [x86_64-linux]="x86_64" [aarch64-linux]="arm64" )
-declare -A hashes
-for system in x86_64-linux aarch64-linux; do
-  arch="${arch_map[$system]}"
-  url="https://github.com/${REPO}/releases/download/${latest_tag}/OpenChamber-${version}-linux-${arch}.AppImage"
-  hashes[$system]="$(nix store prefetch-file --json "$url" | jq -r .hash)"
-done
+get_latest_release() {
+    echo "GETTING LATEST RELEASE" 1>&2
+    api_get "${api_base}/releases/latest"
+}
 
-cat > "$VERSIONS_FILE" <<EOF
+parse_field() {
+    field="$1"
+    grep -o "\"${field}\": *\"[^\"]*\"" | head -1 | sed "s/\"${field}\": *\"//;s/\"$//"
+}
+
+check_api_response() {
+    response="$1"
+    message=$(echo "$response" | parse_field message)
+    if [ -n "$message" ]; then
+        echo "GitHub API error: $message" >&2
+        exit 1
+    fi
+}
+
+get_current_version() {
+    grep -oE 'version = "[^"]+";' versions.nix | sed 's/version = "//;s/";//'
+}
+
+prefetch() {
+    nix store prefetch-file --hash-type sha256 --json "$1" | jq -r '.hash'
+}
+
+prefetch_source() {
+    nix store prefetch-file --unpack --hash-type sha256 --json "$1" | jq -r '.hash'
+}
+
+update_flake() {
+    echo "Updating flake" >&2
+    output=$(nix flake update 2>&1)
+    status=$?
+    echo "$output" | grep '^warning:' >&2 || true
+    echo "$output" | grep -v '^warning:' || true
+    return $status
+}
+
+write_versions_nix() {
+    cat > versions.nix << EOF
 # Machine-updated by .github/update-openchamber.sh — do not edit by hand.
 {
-  version = "${version}";
-  rev = "${rev}";
-  srcHash = "${src_hash}";
+  version = "$1";
+  rev = "$2";
+  srcHash = "$3";
   systems = {
     x86_64-linux = {
       arch = "x86_64";
-      appimage = "${hashes[x86_64-linux]}";
+      appimage = "$4";
     };
     aarch64-linux = {
       arch = "arm64";
-      appimage = "${hashes[aarch64-linux]}";
+      appimage = "$5";
     };
   };
 }
 EOF
+}
 
-nix flake update
+# Resolve a release tag to its commit SHA. Annotated tags point at a tag
+# object rather than a commit, so dereference to the commit SHA before pinning.
+resolve_rev() {
+    tag="$1"
+    ref_json=$(api_get "${api_base}/git/ref/tags/${tag}")
+    check_api_response "$ref_json"
+    rev=$(echo "$ref_json" | parse_field sha | head -1)
+    obj_type=$(echo "$ref_json" | grep -o '"type": *"[^"]*"' | head -1 | sed 's/"type": *"//;s/"//')
+    if [ "$obj_type" = "tag" ]; then
+        tag_json=$(api_get "${api_base}/git/tags/${rev}")
+        check_api_response "$tag_json"
+        rev=$(echo "$tag_json" | grep -o '"sha": *"[^"]*"' | tail -1 | sed 's/"sha": *"//;s/"//')
+    fi
+    if [ -z "$rev" ] || [ "$rev" = "null" ]; then
+        echo "Error: failed to resolve tag ${tag} to a commit SHA" >&2
+        exit 1
+    fi
+    echo "$rev"
+}
 
-if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  echo "should_update=true" >> "$GITHUB_OUTPUT"
-  echo "version=${latest_tag}" >> "$GITHUB_OUTPUT"
-  echo "commit_message=${commit_message}" >> "$GITHUB_OUTPUT"
-fi
+main() {
+    set -e
+
+    echo "Fetching latest OpenChamber release..."
+    latest_release=$(get_latest_release)
+    check_api_response "$latest_release"
+
+    remote_tag=$(echo "$latest_release" | parse_field tag_name)
+
+    if [ -z "$remote_tag" ] || [ "$remote_tag" = "null" ]; then
+        echo "Error: could not parse tag_name from GitHub API response:" >&2
+        echo "$latest_release" >&2
+        exit 1
+    fi
+
+    # Upstream tags carry a leading `v` (e.g. v1.23.0); versions.nix stores
+    # the bare semantic version, and the workflow tag step re-adds the `v`.
+    semantic_version=$(echo "$remote_tag" | sed 's/^v//')
+
+    if ! echo "$semantic_version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+        echo "Error: unexpected version format: ${semantic_version} (from tag ${remote_tag})" >&2
+        exit 1
+    fi
+
+    local_version=$(get_current_version)
+
+    echo "Checking version... local=$local_version remote=$semantic_version (tag=$remote_tag)"
+
+    if [ "$local_version" = "$semantic_version" ]; then
+        echo "Local OpenChamber version is up to date"
+        if $only_check && $ci; then
+            echo "should_update=false" >> "$GITHUB_OUTPUT"
+        fi
+        exit 0
+    fi
+
+    echo "Local OpenChamber version is outdated, updating from $local_version to $semantic_version"
+
+    if $only_check; then
+        if $ci; then
+            echo "should_update=true" >> "$GITHUB_OUTPUT"
+        else
+            echo "should_update=true"
+        fi
+        exit 0
+    fi
+
+    echo "Resolving tag ${remote_tag} to commit SHA..."
+    rev=$(resolve_rev "$remote_tag")
+
+    echo "Prefetching new hashes..."
+    src_hash=$(prefetch_source "https://github.com/${repo}/archive/${rev}.tar.gz")
+    new_x86_64_appimage=$(prefetch "https://github.com/${repo}/releases/download/${remote_tag}/OpenChamber-${semantic_version}-linux-x86_64.AppImage")
+    new_aarch64_appimage=$(prefetch "https://github.com/${repo}/releases/download/${remote_tag}/OpenChamber-${semantic_version}-linux-arm64.AppImage")
+
+    echo "Updating versions.nix..."
+    write_versions_nix \
+    "$semantic_version" \
+    "$rev" \
+    "$src_hash" \
+    "$new_x86_64_appimage" \
+    "$new_aarch64_appimage"
+
+    echo "Updated OpenChamber from $local_version to $semantic_version"
+
+    if $ci; then
+        update_output=$(update_flake)
+    else
+        update_flake
+    fi
+
+    if $ci; then
+        delimiter="EOF_$(date +%s)_$$"
+
+        {
+            echo "commit_message<<${delimiter}"
+            echo "chore(update): openchamber to ${semantic_version}"
+            if [ -n "$update_output" ]; then
+                echo ""
+                echo "$update_output"
+            fi
+            echo "${delimiter}"
+            echo "should_update=true"
+            echo "version=${semantic_version}"
+        } >> "$GITHUB_OUTPUT"
+    fi
+}
+
+main
