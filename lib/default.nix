@@ -175,7 +175,16 @@ lib.makeExtensible (_final: {
     Standard managed-chat worktree directory option for `services.openchamber`.
 
     Relocates managed chat worktrees (`OPENCHAMBER_CHATS_DIR`); unset means
-    upstream keeps them under the data directory (`<dataDir>/chats`).
+    upstream keeps them under its config/data root
+    (`<OPENCHAMBER_DATA_DIR>/chats`, i.e. `~/.config/openchamber/chats`):
+    `<dataDir>/.config/openchamber/chats` for the default system user
+    (where the module forces `OPENCHAMBER_DATA_DIR`),
+    `~/.config/openchamber/chats` of the login user for a custom `user`.
+
+    Verified against the pinned upstream rev: the chats directory defaults
+    to `<config-root>/chats` (`server/index.js:285-287`) where the config
+    root is `OPENCHAMBER_DATA_DIR` when set, else `~/.config/openchamber`
+    (`server/index.js:277-280`).
 
     # Arguments
 
@@ -188,7 +197,15 @@ lib.makeExtensible (_final: {
     lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       inherit default;
-      description = "Directory for managed chat worktrees (passed as OPENCHAMBER_CHATS_DIR).";
+      description = ''
+        Directory for managed chat worktrees (passed as OPENCHAMBER_CHATS_DIR).
+
+        When unset, upstream keeps them under its config/data root
+        (`<OPENCHAMBER_DATA_DIR>/chats`, i.e. `~/.config/openchamber/chats`):
+        `<dataDir>/.config/openchamber/chats` for the default system user
+        (where the module forces `OPENCHAMBER_DATA_DIR`),
+        `~/.config/openchamber/chats` of the login user for a custom `user`.
+      '';
     };
 
   /**
