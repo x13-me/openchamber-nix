@@ -24,6 +24,6 @@ jobs:
       - uses: "DeterminateSystems/flakehub-push@main"
         with:
           visibility: "public"
-          name: "x13-me/openchamber-nix"
+          name: "x/openchamber-nix"
           tag: "${{ inputs.tag || github.ref_name }}"
           include-output-paths: true

@@ -40,7 +40,7 @@ jobs:
         if: steps.check.outputs.should_update == 'true'
         uses: cachix/cachix-action@v17
         with:
-          name: openchamber
+          name: x13
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
       - name: Update version
