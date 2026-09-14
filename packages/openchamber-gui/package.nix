@@ -1,5 +1,5 @@
 # OpenChamber desktop GUI: upstream Linux AppImage repackaged with
-# `appimageTools.wrapType2`, desktop entry `Exec` fixed, icons installed.
+# `appimageTools.wrapType2`, desktop entry `Exec`/`Icon` fixed, icons installed.
 #
 # NOTE: electron-updater self-update is disabled by design here —
 # the AppImage lives in the immutable Nix store.
@@ -47,6 +47,33 @@ appimageTools.wrapType2 {
         [ -f "$icon" ] || continue
         ext="''${icon##*.}"
         install -Dm444 "$icon" "$out/share/icons/hicolor/512x512/apps/openchamber-gui.$ext"
+      done
+      # Upstream declares `Icon=openchamber`, but the only copy installed
+      # under that name lands in the non-standard `hicolor/1024x1024` dir,
+      # which hicolor's index.theme does not list — so theme lookups never
+      # match it and the AppMenu shows a placeholder. The copy in the
+      # standard `512x512` dir instead uses our `openchamber-gui` name,
+      # which no desktop file references. Install BOTH names in the
+      # standard dir and point the known entry at the name we guarantee.
+      # Any other Icon= lines (e.g. from additional upstream .desktop
+      # files) are left untouched and keep resolving via the
+      # usr/share/icons copy above.
+      for guiIcon in $out/share/icons/hicolor/512x512/apps/openchamber-gui.*; do
+        [ -f "$guiIcon" ] || continue
+        ext="''${guiIcon##*.}"
+        install -Dm444 "$guiIcon" "$out/share/icons/hicolor/512x512/apps/openchamber.$ext"
+      done
+      if ls $out/share/icons/hicolor/512x512/apps/openchamber-gui.* >/dev/null 2>&1; then
+        sed -i 's|^Icon=openchamber$|Icon=openchamber-gui|' $out/share/applications/*.desktop
+      fi
+      # Fail-safe, not fail-hard: warn if any installed entry still names
+      # an icon we do not ship, so future upstream renames surface at
+      # build time instead of as a silent placeholder in the AppMenu.
+      for desktop in $out/share/applications/*.desktop; do
+        iconName="$(sed -n 's|^Icon=||p' "$desktop" | head -n 1)"
+        case "$iconName" in "" | /* | *.*) continue ;; esac
+        match="$(find $out/share/icons $out/share/pixmaps -name "$iconName.*" -print -quit 2>/dev/null)"
+        [ -n "$match" ] || echo "warning: $desktop: Icon=$iconName has no installed file" >&2
       done
     '';
   meta = {
