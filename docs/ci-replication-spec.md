@@ -2,7 +2,23 @@
 
 > **Deprecation note:** This spec describes the original Helium dual-branch (`main`/`rolling`) design.
 > This repo deliberately diverged in commit `326872d` to singular `main` tracking upstream latest.
-> There is no `rolling` branch/workflow; `flakehub-publish-rolling.yml` fires on `main` only, and `rolling: true` is the FlakeHub channel.
+> Divergences applied here (spec followed faithfully otherwise; existing file
+> names `build-openchamber.yml` / `update-openchamber-main.yml` kept):
+> (a) Single branch — no `rolling` branch, no `update-*-rolling.yml`, no
+> `rolling` branch triggers; `cachix/install-nix-action` (§6.5/Appendix,
+> rolling-only) is therefore absent.
+> (b) Tag-only version-tagged FlakeHub publishing — commits `2a284cd`/`179a1c7`
+> deleted `flakehub-publish-rolling.yml`, so no workflow uses `rolling: true`
+> and plain `main` pushes do not publish; `flakehub-publish-tagged.yml`
+> (`v*` tags + dispatch with `inputs.tag || github.ref_name` passthrough) is
+> the sole publish path. Note the `tag:` shape differs slightly from §6.3
+> (`"${{ inputs.tag }}"`): the `|| github.ref_name` fallback passes an
+> explicit version on tag-push events instead of leaving inference to checkout.
+> (c) Other deliberate deltas — local-only `check.yml` (push to main + PRs:
+> `nix flake check --no-build --all-systems` plus `nix fmt -- --ci`) is kept
+> although §2 lists it as a non-goal; the update step also carries `GH_TOKEN`
+> (§6.4 wires it on the check step only) because the update path makes
+> authenticated API calls (tag→SHA resolution).
 
 > Source repo: `helium-nix` (`/home/user/helium-nix`).
 > This document specifies the CI exactly as implemented so it can be replicated
