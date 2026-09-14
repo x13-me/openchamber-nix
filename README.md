@@ -151,7 +151,7 @@ NixOS module (single import — the overlay is bundled by the module):
     # user = "youruser";
     # group = "users";
     # uiPasswordFile = "/run/secrets/openchamber-password";
-    # enableWebUI = false;  # API-only mode: REST API without browser UI assets
+    # enableWebUI = true;  # opt-in: serve browser UI assets alongside the REST API (default is API-only)
     # lan = true;  # bind 0.0.0.0 (needs uiPasswordFile, or allowUnauthenticatedLan = true)
     # allowUnauthenticatedLan = true;  # accept a LAN bind with no UI password (upstream escape hatch; prefer uiPasswordFile)
     # opencodeHost = "http://hostname:4096";  # external OpenCode server (with skipOpencodeStart = true)

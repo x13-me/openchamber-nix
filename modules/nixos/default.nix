@@ -108,12 +108,12 @@ in
   options.services.openchamber = {
     enable = lib.mkEnableOption "OpenChamber server";
 
-    # NOTE: `mkEnableOption` defaults to false; the web UI stays on unless
-    # opted out, so this is a plain bool defaulting to true (`enable*`
-    # naming matches the repo's existing bools).
+    # NOTE: `mkEnableOption` defaults to false and so does this: the
+    # service is headless API-only out of the box, and the browser UI is
+    # opt-in (`enable*` naming matches the repo's existing bools).
     enableWebUI = lib.mkOption {
       type = lib.types.bool;
-      default = true;
+      default = false;
       description = ''
         Whether to serve the builtin browser web UI alongside the API.
 
