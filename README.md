@@ -162,7 +162,7 @@ NixOS module (single import — the overlay is bundled by the module):
     # verboseRequestLogs = true;  # log every request
     # skipApiCompression = true;  # skip API response compression
     # installCliForUser = false;  # skip putting the CLI on the service account's PATH (needed for LDAP/SSSD users)
-    # settings = { };  # freeform attrs -> seeded into $OPENCHAMBER_DATA_DIR/settings.json before each start
+    # settings = { };  # freeform attrs -> seeded into $OPENCHAMBER_DATA_DIR/settings.json on first start only (an existing non-empty file is never overwritten; delete it to re-seed)
   };
   # When enabled, the service account gets the CLI on PATH
   # (`users.users.<user>.packages`), so it can run `openchamber status` /

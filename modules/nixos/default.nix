@@ -28,7 +28,15 @@ let
   # `@args` capture would silently miss the injection.
   extpkgs = config._module.args.extpkgs or pkgs;
   cfg = config.services.openchamber;
+  versions = import ../../versions.nix;
   jsonFormat = pkgs.formats.json { };
+  # Runnable server: the configured `package` rebuilt against
+  # `opencodePackage`, so the managed binary on the wrapper's PATH tracks
+  # the option instead of the wrapper's build-time nixpkgs pin. A fully
+  # custom `package` must accept the same `opencode` callPackage argument
+  # (see `packages/openchamber-server/package.nix`) — evaluation fails
+  # fast otherwise.
+  serverPackage = cfg.package.override { opencode = cfg.opencodePackage; };
   # True while the service runs as the auto-created system account (see
   # the `user`/`group` assertion below: both stay at, or both leave, the
   # default together). Only then does the module force HOME/XDG/data paths
@@ -74,7 +82,7 @@ let
   # (`cli-args.js:543` ignores `--lan` under an explicit `--host`, and
   # `--host` always carries the effective address here anyway).
   serveArgs = [
-    "${cfg.package}/bin/openchamber"
+    "${serverPackage}/bin/openchamber"
     "serve"
     # Foreground is mandatory under systemd (`Type=simple`
     # tracks the direct child): without it `serve` daemonizes
@@ -160,11 +168,26 @@ in
 
     opencodePort = openchamberLib.mkOpencodePortOption { };
 
+    opencodePackage = openchamberLib.mkOpencodePackageOption {
+      # `opencode` is intentionally NOT resolved via the throwing
+      # `requirePackage` below: the injected flake scope never carries it,
+      # so fall back to nixpkgs (an injected scope that DOES carry it —
+      # e.g. a pinned overlay set — still wins).
+      default = extpkgs.opencode or pkgs.opencode;
+    };
+
     package = lib.mkOption {
       type = lib.types.package;
       default = requirePackage "openchamber-server";
       defaultText = lib.literalExpression "pkgs.openchamber-server";
-      description = "The openchamber-server package to run (provided by this flake's overlay, or `_module.args.extpkgs`).";
+      description = ''
+        The openchamber-server package to run (provided by this flake's overlay, or `_module.args.extpkgs`).
+
+        A custom replacement must accept an `opencode` callPackage
+        argument like the default (`packages/openchamber-server/package.nix`):
+        the module runs `package.override { opencode = opencodePackage; }`,
+        so only the stock interface picks up the managed-binary pin.
+      '';
     };
 
     port = openchamberLib.mkPortOption { };
@@ -192,6 +215,10 @@ in
 
         Must be customized together with `group` (see also `group`):
         e.g. `user = "alice"` requires `group = "users"`.
+
+        With a custom login user, service state (opencode config/auth,
+        `~/.config/openchamber`) lives in that account's real HOME and is
+        shared with any personal opencode use on the same account.
       '';
     };
 
@@ -219,6 +246,18 @@ in
       # Imported by relative path (not via flake `self`) to avoid
       # self-reference cycles. `overlays.default` remains exposed for manual use.
       nixpkgs.overlays = [ (import ../../nix/overlay.nix) ];
+    }
+    {
+      # Managed-binary drift is advisory only: warn (never assert) when
+      # the configured binary's version differs from the
+      # upstream-expected one, so a lagging nixpkgs keeps evaluating.
+      warnings =
+        let
+          actualOpencodeVersion = cfg.opencodePackage.version or null;
+        in
+        lib.optionals (actualOpencodeVersion != null && actualOpencodeVersion != versions.opencodeVersion) [
+          "services.openchamber: opencodePackage version ${actualOpencodeVersion} differs from ${versions.opencodeVersion} expected by openchamber-server ${versions.version} (upstream packages/web @opencode-ai/sdk pin) — the managed OpenCode may drift; override services.openchamber.opencodePackage with a matching build, or wait for nixpkgs to catch up."
+        ];
     }
     (lib.mkIf cfg.enable (
       lib.mkMerge [
@@ -270,7 +309,7 @@ in
               inherit (cfg) group;
               description = "OpenChamber server";
               # CLI on PATH for the default account (pairing/management).
-              packages = lib.optionals cfg.installCliForUser [ cfg.package ];
+              packages = lib.optionals cfg.installCliForUser [ serverPackage ];
             };
           };
           users.groups = lib.mkIf (cfg.group == "openchamber") {
@@ -409,7 +448,7 @@ in
         # account (LDAP/SSSD) must opt out via `installCliForUser = false`
         # instead — see that option.
         (lib.mkIf (cfg.installCliForUser && !isSystemUser) {
-          users.users.${cfg.user}.packages = [ cfg.package ];
+          users.users.${cfg.user}.packages = [ serverPackage ];
         })
         (lib.mkIf (cfg.settings != { }) (
           let
@@ -420,12 +459,14 @@ in
             # unchanged). Upstream has no settings env var or `serve` flag —
             # the live document is `$OPENCHAMBER_DATA_DIR/settings.json`
             # (`server/index.js:320`, rooted at `OPENCHAMBER_DATA_DIR` or
-            # `~/.config/openchamber`), so seed it before every start. Runs
-            # as the service user, so `$HOME` resolves for personal-user
-            # instances while `OPENCHAMBER_DATA_DIR` covers the default
-            # system user. Declarative settings win on every (re)start:
-            # edits made through the running UI are overwritten — keep them
-            # in Nix instead.
+            # `~/.config/openchamber`), so seed it before start — but ONLY
+            # when absent or empty (`[ ! -s ... ]`). An existing file is
+            # never touched: edits made through the running UI (or by hand)
+            # survive every (re)start. Runs as the service user, so `$HOME`
+            # resolves for personal-user instances while
+            # `OPENCHAMBER_DATA_DIR` covers the default system user. To
+            # re-apply Nix `settings`, delete the file (or empty it) and
+            # restart: the next start re-seeds it from the store copy.
             # NOTE: the store copy is world-readable — never put secrets in
             # `settings`; use `uiPasswordFile` / credentials for secrets.
             systemd.services.openchamber.serviceConfig.ExecStartPre = [
@@ -433,8 +474,10 @@ in
                 set -euo pipefail
                 dest="''${OPENCHAMBER_DATA_DIR:-$HOME/.config/openchamber}/settings.json"
                 mkdir -p "$(dirname "$dest")"
-                cp -f ${settingsFile} "$dest"
-                chmod 0600 "$dest"
+                if [ ! -s "$dest" ]; then
+                  cp -f ${settingsFile} "$dest"
+                  chmod 0600 "$dest"
+                fi
               ''}"
             ];
           }

@@ -3,6 +3,11 @@
   version = "1.23.1";
   rev = "961f1611cb50cb7dd8d24c82e688ca6d8eef37bb";
   srcHash = "sha256-GcyIybBNfaBRUgbUrIlOJFnPOBvlCNCFIWUGFEkHIM8=";
+  # Upstream-expected opencode CLI version: the packages/web
+  # @opencode-ai/sdk pin (tracks the CLI release line; the server has no
+  # separate binary-version gate). Maintained by
+  # .github/update-openchamber.sh; drives the opencodePackage skew warning.
+  opencodeVersion = "1.18.30";
   systems = {
     x86_64-linux = {
       arch = "x86_64";

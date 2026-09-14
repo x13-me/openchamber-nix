@@ -314,6 +314,43 @@ lib.makeExtensible (_final: {
     };
 
   /**
+    Standard managed-OpenCode binary package option for `services.openchamber`.
+
+    Supplies the `opencode` binary placed on the server wrapper's PATH
+    (the server resolves its managed binary via PATH — upstream
+    `server/lib/opencode/env-runtime.js` — independent of `package`).
+    The upstream-expected version is tracked as `opencodeVersion` in
+    `versions.nix` (the `@opencode-ai/sdk` pin in `packages/web`, which
+    tracks the CLI release line); skew surfaces as a warning, never an
+    evaluation error, so a lagging nixpkgs keeps evaluating.
+
+    # Arguments
+
+    - `default`: opencode package (no default of its own — pass
+      `extpkgs.opencode or pkgs.opencode`, mirroring `package`'s
+      extpkgs-first resolution with a nixpkgs fallback: the injected
+      flake scope never carries `opencode`).
+  */
+  mkOpencodePackageOption =
+    { default }:
+    lib.mkOption {
+      type = lib.types.package;
+      inherit default;
+      defaultText = lib.literalExpression "pkgs.opencode";
+      description = ''
+        The opencode package placed on the server wrapper's PATH for the
+        managed OpenCode subprocess (rebuilt into the runnable server, so
+        overriding this swaps the managed binary).
+
+        Should match the upstream-expected version (`opencodeVersion` in
+        `versions.nix`, from the pinned `packages/web`
+        `@opencode-ai/sdk`): skew only warns — evaluation keeps working
+        while nixpkgs lags — so override with a matching build or wait
+        for nixpkgs to catch up.
+      '';
+    };
+
+  /**
     Standard API-compression kill-switch option for `services.openchamber`.
 
     Sets `OPENCHAMBER_SKIP_API_COMPRESSION` (wins over the compress toggle;
@@ -409,9 +446,11 @@ lib.makeExtensible (_final: {
         (`$OPENCHAMBER_DATA_DIR/settings.json` — the only settings path
         the pinned upstream reads: `server/index.js:320`, rooted at
         `OPENCHAMBER_DATA_DIR` or `~/.config/openchamber`; upstream has no
-        settings env var or `serve` flag) via `ExecStartPre` on every
-        (re)start, so declarative settings win over edits made through
-        the running UI.
+        settings env var or `serve` flag) via `ExecStartPre` on first
+        start only: an existing non-empty file is never touched, so edits
+        made through the running UI (or by hand) survive every (re)start.
+        Later Nix-side changes do NOT apply while the file exists — to
+        re-seed, delete the file (or empty it) and restart the service.
 
         Never put secrets in settings: the generated file lives in the
         world-readable Nix store. Use password-file / credential options

@@ -102,6 +102,11 @@ write_versions_nix() {
   version = "$1";
   rev = "$2";
   srcHash = "$3";
+  # Upstream-expected opencode CLI version: the packages/web
+  # @opencode-ai/sdk pin (tracks the CLI release line; the server has no
+  # separate binary-version gate). Maintained by
+  # .github/update-openchamber.sh; drives the opencodePackage skew warning.
+  opencodeVersion = "$6";
   systems = {
     x86_64-linux = {
       arch = "x86_64";
@@ -114,6 +119,31 @@ write_versions_nix() {
   };
 }
 EOF
+}
+
+# Extract the upstream-expected opencode CLI version from the pinned
+# source tree: packages/web talks to the managed binary via
+# @opencode-ai/sdk, whose pin tracks the CLI release line (no separate
+# binary-version gate exists server-side — see
+# server/lib/opencode/env-runtime.js, which resolves `opencode` off PATH).
+extract_opencode_version() {
+    rev="$1"
+    tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT INT TERM
+    if [ -n "$GH_TOKEN" ]; then
+        curl -sL -H "Authorization: Bearer ${GH_TOKEN}" "https://github.com/${repo}/archive/${rev}.tar.gz" -o "$tmpdir/src.tar.gz"
+    else
+        curl -sL "https://github.com/${repo}/archive/${rev}.tar.gz" -o "$tmpdir/src.tar.gz"
+    fi
+    tar -xzf "$tmpdir/src.tar.gz" -C "$tmpdir"
+    version=$(jq -r '.dependencies["@opencode-ai/sdk"]' "$tmpdir"/*/packages/web/package.json | sed 's/^[~^ ]*//')
+    rm -rf "$tmpdir"
+    trap - EXIT INT TERM
+    if ! echo "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+        echo "Error: unexpected @opencode-ai/sdk version: ${version}" >&2
+        exit 1
+    fi
+    echo "$version" | tr -d '\000-\037'
 }
 
 # Resolve a release tag to its commit SHA. Annotated tags point at a tag
@@ -191,13 +221,17 @@ main() {
     new_x86_64_appimage=$(prefetch "https://github.com/${repo}/releases/download/${remote_tag}/OpenChamber-${semantic_version}-linux-x86_64.AppImage")
     new_aarch64_appimage=$(prefetch "https://github.com/${repo}/releases/download/${remote_tag}/OpenChamber-${semantic_version}-linux-arm64.AppImage")
 
+    echo "Extracting expected opencode version..."
+    opencode_version=$(extract_opencode_version "$rev")
+
     echo "Updating versions.nix..."
     write_versions_nix \
     "$semantic_version" \
     "$rev" \
     "$src_hash" \
     "$new_x86_64_appimage" \
-    "$new_aarch64_appimage"
+    "$new_aarch64_appimage" \
+    "$opencode_version"
 
     echo "Updated OpenChamber from $local_version to $semantic_version"
 
