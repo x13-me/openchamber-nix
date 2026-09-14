@@ -1,11 +1,11 @@
 # NixOS module: `services.openchamber`.
 #
-# Consuming flake inputs need the overlay (or `_module.args.extpkgs`):
+# Self-contained: the flake's overlay is bundled via `nixpkgs.overlays`
+# below, so a single import suffices:
 #
 # ```nix
 # {
 #   imports = [ inputs.openchamber-nix.nixosModules.default ];
-#   nixpkgs.overlays = [ inputs.openchamber-nix.overlays.default ];
 #   services.openchamber = {
 #     enable = true;
 #     port = 3000;
@@ -213,225 +213,233 @@ in
     # sorts raw lines and would scramble multi-line option definitions.
   };
 
-  config = lib.mkIf cfg.enable (
-    lib.mkMerge [
-      {
-        # Fail fast when only one of `user`/`group` leaves the default:
-        # a half-customized identity would run the service under a
-        # nonexistent or mismatched account.
-        assertions = [
-          {
-            assertion = isSystemUser == (cfg.group == "openchamber");
-            message = ''services.openchamber: `user` and `group` must be set together — e.g. user = "alice" requires group = "users" (keep both at "openchamber" or customize both).'';
-          }
-          {
-            # Mirrors upstream `assertAuthenticatedNetworkExposure`
-            # (`bin/lib/cli-network.js:156`, enforced CLI-side at
-            # `bin/lib/commands-serve.js:120` and server-side at
-            # `server/index.js:1625` with the same two escape hatches:
-            # a configured UI password or
-            # `OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN=true`): a
-            # network-exposed bind without either throws upstream —
-            # catch it at evaluation instead. `uiPasswordFile` counts
-            # because the wrapper below exports its content as
-            # `OPENCHAMBER_UI_PASSWORD` (upstream's real mechanism —
-            # there is no `*_PASSWORD_FILE` var at the pinned rev).
-            assertion = isLoopbackHost || cfg.uiPasswordFile != null || cfg.allowUnauthenticatedLan;
-            message = ''services.openchamber: host "${effectiveHost}" is reachable on the network — set `uiPasswordFile` (recommended) or `allowUnauthenticatedLan = true` to accept the risk (upstream refuses to bind without UI auth).'';
-          }
-          {
-            # Fail fast when a custom `user` names an account this
-            # evaluation never defines (e.g. LDAP/SSSD): installing CLI
-            # packages would otherwise implicitly create a local shadow
-            # account (or trip nixpkgs' own user-completion assertions).
-            # Either define the account (the `alice`/`users` case) or opt
-            # out with `installCliForUser = false`.
-            # NOTE: reading the merged account VALUE here is safe — only
-            # gating a `users.users` key on it would recurse.
-            assertion = isSystemUser || !cfg.installCliForUser || accountDefined;
-            message = ''services.openchamber: user "${cfg.user}" is not defined in this evaluation — define it (e.g. users.users."${cfg.user}".isNormalUser = true) or set `installCliForUser = false` when the account is managed externally (LDAP/SSSD).'';
-          }
-        ];
-
-        # Static service account (created only while the defaults are
-        # used). A custom `user`/`group` must already exist — e.g. point
-        # `user` at your login account so the server can reach HOME,
-        # ~/.ssh, git config, and workspace files.
-        users.users = lib.mkIf isSystemUser {
-          openchamber = {
-            isSystemUser = true;
-            inherit (cfg) group;
-            description = "OpenChamber server";
-            # CLI on PATH for the default account (pairing/management).
-            packages = lib.optionals cfg.installCliForUser [ cfg.package ];
-          };
-        };
-        users.groups = lib.mkIf (cfg.group == "openchamber") {
-          openchamber = { };
-        };
-
-        # A custom `dataDir` outside `/var/lib/openchamber` is not covered
-        # by `StateDirectory` below — create it before start while the
-        # service account is known to this evaluation. An
-        # externally-managed account (LDAP/SSSD, ...) must pre-create the
-        # directory itself with correct ownership (see `dataDir` docs).
-        # Paths at or under `/var/lib/openchamber` are already owned via
-        # `StateDirectory`, so no redundant rule (covers `.../sub` too).
-        systemd.tmpfiles.rules =
-          let
-            dataDirStr = toString cfg.dataDir;
-            underStateDir =
-              dataDirStr == "/var/lib/openchamber" || lib.hasPrefix "/var/lib/openchamber/" dataDirStr;
-          in
-          lib.mkIf (!underStateDir && accountDefined) [
-            "d ${dataDirStr} 0750 ${cfg.user} ${cfg.group} -"
-          ];
-
-        systemd.services.openchamber = {
-          description = "OpenChamber server";
-          wantedBy = [ "multi-user.target" ];
-          after = [ "network.target" ];
-          environment = {
-            OPENCHAMBER_HOST = effectiveHost;
-            OPENCHAMBER_PORT = toString cfg.port;
-            # Always explicit: matches the upstream default (`127.0.0.1`)
-            # so managed-OpenCode binds stay deterministic.
-            OPENCHAMBER_OPENCODE_HOSTNAME = cfg.opencodeHostname;
-          }
-          // lib.optionalAttrs (!cfg.enableWebUI) {
-            # API-only fallback env (the `--api-only` CLI flag in ExecStart
-            # below is the primary switch; both are honored by the pinned
-            # upstream 1.23.0 — `--api-only` in `serve` arg parsing plus
-            # `OPENCHAMBER_API_ONLY` (`1`/`true`) in the server entrypoint).
-            OPENCHAMBER_API_ONLY = "1";
-          }
-          // lib.optionalAttrs (cfg.chatsDir != null) {
-            OPENCHAMBER_CHATS_DIR = toString cfg.chatsDir;
-          }
-          // lib.optionalAttrs cfg.allowUnauthenticatedLan {
-            # Strict `=== 'true'` comparison upstream
-            # (`server/lib/security/bind-host.js:35`) — no `1` shorthand.
-            OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN = "true";
-          }
-          // lib.optionalAttrs (cfg.opencodeHost != null) {
-            OPENCODE_HOST = cfg.opencodeHost;
-          }
-          // lib.optionalAttrs (cfg.opencodePort != null) {
-            OPENCODE_PORT = toString cfg.opencodePort;
-          }
-          // lib.optionalAttrs cfg.skipOpencodeStart {
-            # Server checks both with strict `=== 'true'`
-            # (`server/index.js:641`; the serve launcher itself forwards
-            # one into the other at `bin/lib/commands-serve.js:291).
-            # Setting both is harmless (same flag/env pairing pattern as
-            # `--api-only`).
-            OPENCODE_SKIP_START = "true";
-            OPENCHAMBER_SKIP_OPENCODE_START = "true";
-          }
-          // lib.optionalAttrs cfg.verboseRequestLogs {
-            OPENCHAMBER_VERBOSE_REQUEST_LOGS = "1";
-          }
-          // lib.optionalAttrs cfg.skipApiCompression {
-            OPENCHAMBER_SKIP_API_COMPRESSION = "1";
-          }
-          // lib.optionalAttrs isSystemUser {
-            # Writable pathing for the default system account: systemd
-            # starts system users with a bare environment, and
-            # StateDirectory alone only creates /var/lib/openchamber
-            # without pointing HOME/XDG at it — upstream would then resolve
-            # its data dir (`$HOME/.config/openchamber` unless
-            # OPENCHAMBER_DATA_DIR is set) to nowhere writable. Force the
-            # whole HOME/XDG tree plus OPENCHAMBER_DATA_DIR under `dataDir`.
-            # Skipped for a custom login `user` so personal-user instances
-            # inherit that account's HOME (`~/.config/openchamber` etc.).
-            HOME = "${cfg.dataDir}";
-            XDG_CONFIG_HOME = "${cfg.dataDir}/.config";
-            XDG_DATA_HOME = "${cfg.dataDir}/.local/share";
-            XDG_STATE_HOME = "${cfg.dataDir}/.local/state";
-            XDG_CACHE_HOME = "${cfg.dataDir}/.cache";
-            OPENCHAMBER_DATA_DIR = "${cfg.dataDir}/.config/openchamber";
-          };
-          serviceConfig = {
-            ExecStart =
-              if cfg.uiPasswordFile == null then
-                lib.escapeShellArgs serveArgs
-              else
-                # Upstream reads only `--ui-password` /
-                # `OPENCHAMBER_UI_PASSWORD` (`bin/lib/cli-args.js:61`,
-                # `server/index.js:1622`) — no `*_FILE` var exists, so the
-                # LoadCredential-staged secret is exported into the real
-                # env var here. A wrapper (not `EnvironmentFile`) keeps
-                # the secret out of the world-readable store and out of
-                # `/proc` cmdlines (`--ui-password` on argv would leak).
-                # Fails fast on an empty credential instead of serving
-                # an unprotected network bind.
-                "${pkgs.writeShellScript "openchamber-serve" ''
-                  set -euo pipefail
-                  credential="$CREDENTIALS_DIRECTORY/ui-password"
-                  if [ ! -s "$credential" ]; then
-                    echo "openchamber: UI password credential is empty or missing: $credential" >&2
-                    exit 1
-                  fi
-                  export OPENCHAMBER_UI_PASSWORD="$(cat "$credential")"
-                  exec ${lib.escapeShellArgs serveArgs}
-                ''}";
-            Restart = "on-failure";
-            User = cfg.user;
-            Group = cfg.group;
-            # Owned by User:Group; keeps state across upgrades.
-            StateDirectory = "openchamber";
-            # Upstream resolves its data dir from HOME/XDG (or
-            # OPENCHAMBER_DATA_DIR above); give the server a real writable
-            # cwd instead of systemd's `/` default, and allow writes there.
-            WorkingDirectory = cfg.dataDir;
-            ReadWritePaths = [ cfg.dataDir ];
-          }
-          // lib.optionalAttrs (cfg.uiPasswordFile != null) {
-            # LoadCredential stages the secret where the static service
-            # user can read it; the raw host path may not be accessible
-            # to it otherwise.
-            LoadCredential = [ "ui-password:${cfg.uiPasswordFile}" ];
-          };
-        };
-      }
-      # CLI on PATH for a custom service account (pairing/management
-      # commands like `openchamber status` / `openchamber tunnel` run as
-      # the service user). Gated on static conditions only: testing
-      # `users.users` for the account here would recurse infinitely (the
-      # merge cannot decide its own key set), so an externally-managed
-      # account (LDAP/SSSD) must opt out via `installCliForUser = false`
-      # instead — see that option.
-      (lib.mkIf (cfg.installCliForUser && !isSystemUser) {
-        users.users.${cfg.user}.packages = [ cfg.package ];
-      })
-      (lib.mkIf (cfg.settings != { }) (
-        let
-          settingsFile = jsonFormat.generate "openchamber-settings.json" cfg.settings;
-        in
+  config = lib.mkMerge [
+    {
+      # Bundle the flake's overlay so consumers need only this import.
+      # Imported by relative path (not via flake `self`) to avoid
+      # self-reference cycles. `overlays.default` remains exposed for manual use.
+      nixpkgs.overlays = [ (import ../../nix/overlay.nix) ];
+    }
+    (lib.mkIf cfg.enable (
+      lib.mkMerge [
         {
-          # Freeform settings (default `{}` = this block vanishes, behavior
-          # unchanged). Upstream has no settings env var or `serve` flag —
-          # the live document is `$OPENCHAMBER_DATA_DIR/settings.json`
-          # (`server/index.js:320`, rooted at `OPENCHAMBER_DATA_DIR` or
-          # `~/.config/openchamber`), so seed it before every start. Runs
-          # as the service user, so `$HOME` resolves for personal-user
-          # instances while `OPENCHAMBER_DATA_DIR` covers the default
-          # system user. Declarative settings win on every (re)start:
-          # edits made through the running UI are overwritten — keep them
-          # in Nix instead.
-          # NOTE: the store copy is world-readable — never put secrets in
-          # `settings`; use `uiPasswordFile` / credentials for secrets.
-          systemd.services.openchamber.serviceConfig.ExecStartPre = [
-            "${pkgs.writeShellScript "openchamber-install-settings" ''
-              set -euo pipefail
-              dest="''${OPENCHAMBER_DATA_DIR:-$HOME/.config/openchamber}/settings.json"
-              mkdir -p "$(dirname "$dest")"
-              cp -f ${settingsFile} "$dest"
-              chmod 0600 "$dest"
-            ''}"
+          # Fail fast when only one of `user`/`group` leaves the default:
+          # a half-customized identity would run the service under a
+          # nonexistent or mismatched account.
+          assertions = [
+            {
+              assertion = isSystemUser == (cfg.group == "openchamber");
+              message = ''services.openchamber: `user` and `group` must be set together — e.g. user = "alice" requires group = "users" (keep both at "openchamber" or customize both).'';
+            }
+            {
+              # Mirrors upstream `assertAuthenticatedNetworkExposure`
+              # (`bin/lib/cli-network.js:156`, enforced CLI-side at
+              # `bin/lib/commands-serve.js:120` and server-side at
+              # `server/index.js:1625` with the same two escape hatches:
+              # a configured UI password or
+              # `OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN=true`): a
+              # network-exposed bind without either throws upstream —
+              # catch it at evaluation instead. `uiPasswordFile` counts
+              # because the wrapper below exports its content as
+              # `OPENCHAMBER_UI_PASSWORD` (upstream's real mechanism —
+              # there is no `*_PASSWORD_FILE` var at the pinned rev).
+              assertion = isLoopbackHost || cfg.uiPasswordFile != null || cfg.allowUnauthenticatedLan;
+              message = ''services.openchamber: host "${effectiveHost}" is reachable on the network — set `uiPasswordFile` (recommended) or `allowUnauthenticatedLan = true` to accept the risk (upstream refuses to bind without UI auth).'';
+            }
+            {
+              # Fail fast when a custom `user` names an account this
+              # evaluation never defines (e.g. LDAP/SSSD): installing CLI
+              # packages would otherwise implicitly create a local shadow
+              # account (or trip nixpkgs' own user-completion assertions).
+              # Either define the account (the `alice`/`users` case) or opt
+              # out with `installCliForUser = false`.
+              # NOTE: reading the merged account VALUE here is safe — only
+              # gating a `users.users` key on it would recurse.
+              assertion = isSystemUser || !cfg.installCliForUser || accountDefined;
+              message = ''services.openchamber: user "${cfg.user}" is not defined in this evaluation — define it (e.g. users.users."${cfg.user}".isNormalUser = true) or set `installCliForUser = false` when the account is managed externally (LDAP/SSSD).'';
+            }
           ];
+
+          # Static service account (created only while the defaults are
+          # used). A custom `user`/`group` must already exist — e.g. point
+          # `user` at your login account so the server can reach HOME,
+          # ~/.ssh, git config, and workspace files.
+          users.users = lib.mkIf isSystemUser {
+            openchamber = {
+              isSystemUser = true;
+              inherit (cfg) group;
+              description = "OpenChamber server";
+              # CLI on PATH for the default account (pairing/management).
+              packages = lib.optionals cfg.installCliForUser [ cfg.package ];
+            };
+          };
+          users.groups = lib.mkIf (cfg.group == "openchamber") {
+            openchamber = { };
+          };
+
+          # A custom `dataDir` outside `/var/lib/openchamber` is not covered
+          # by `StateDirectory` below — create it before start while the
+          # service account is known to this evaluation. An
+          # externally-managed account (LDAP/SSSD, ...) must pre-create the
+          # directory itself with correct ownership (see `dataDir` docs).
+          # Paths at or under `/var/lib/openchamber` are already owned via
+          # `StateDirectory`, so no redundant rule (covers `.../sub` too).
+          systemd.tmpfiles.rules =
+            let
+              dataDirStr = toString cfg.dataDir;
+              underStateDir =
+                dataDirStr == "/var/lib/openchamber" || lib.hasPrefix "/var/lib/openchamber/" dataDirStr;
+            in
+            lib.mkIf (!underStateDir && accountDefined) [
+              "d ${dataDirStr} 0750 ${cfg.user} ${cfg.group} -"
+            ];
+
+          systemd.services.openchamber = {
+            description = "OpenChamber server";
+            wantedBy = [ "multi-user.target" ];
+            after = [ "network.target" ];
+            environment = {
+              OPENCHAMBER_HOST = effectiveHost;
+              OPENCHAMBER_PORT = toString cfg.port;
+              # Always explicit: matches the upstream default (`127.0.0.1`)
+              # so managed-OpenCode binds stay deterministic.
+              OPENCHAMBER_OPENCODE_HOSTNAME = cfg.opencodeHostname;
+            }
+            // lib.optionalAttrs (!cfg.enableWebUI) {
+              # API-only fallback env (the `--api-only` CLI flag in ExecStart
+              # below is the primary switch; both are honored by the pinned
+              # upstream 1.23.0 — `--api-only` in `serve` arg parsing plus
+              # `OPENCHAMBER_API_ONLY` (`1`/`true`) in the server entrypoint).
+              OPENCHAMBER_API_ONLY = "1";
+            }
+            // lib.optionalAttrs (cfg.chatsDir != null) {
+              OPENCHAMBER_CHATS_DIR = toString cfg.chatsDir;
+            }
+            // lib.optionalAttrs cfg.allowUnauthenticatedLan {
+              # Strict `=== 'true'` comparison upstream
+              # (`server/lib/security/bind-host.js:35`) — no `1` shorthand.
+              OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN = "true";
+            }
+            // lib.optionalAttrs (cfg.opencodeHost != null) {
+              OPENCODE_HOST = cfg.opencodeHost;
+            }
+            // lib.optionalAttrs (cfg.opencodePort != null) {
+              OPENCODE_PORT = toString cfg.opencodePort;
+            }
+            // lib.optionalAttrs cfg.skipOpencodeStart {
+              # Server checks both with strict `=== 'true'`
+              # (`server/index.js:641`; the serve launcher itself forwards
+              # one into the other at `bin/lib/commands-serve.js:291).
+              # Setting both is harmless (same flag/env pairing pattern as
+              # `--api-only`).
+              OPENCODE_SKIP_START = "true";
+              OPENCHAMBER_SKIP_OPENCODE_START = "true";
+            }
+            // lib.optionalAttrs cfg.verboseRequestLogs {
+              OPENCHAMBER_VERBOSE_REQUEST_LOGS = "1";
+            }
+            // lib.optionalAttrs cfg.skipApiCompression {
+              OPENCHAMBER_SKIP_API_COMPRESSION = "1";
+            }
+            // lib.optionalAttrs isSystemUser {
+              # Writable pathing for the default system account: systemd
+              # starts system users with a bare environment, and
+              # StateDirectory alone only creates /var/lib/openchamber
+              # without pointing HOME/XDG at it — upstream would then resolve
+              # its data dir (`$HOME/.config/openchamber` unless
+              # OPENCHAMBER_DATA_DIR is set) to nowhere writable. Force the
+              # whole HOME/XDG tree plus OPENCHAMBER_DATA_DIR under `dataDir`.
+              # Skipped for a custom login `user` so personal-user instances
+              # inherit that account's HOME (`~/.config/openchamber` etc.).
+              HOME = "${cfg.dataDir}";
+              XDG_CONFIG_HOME = "${cfg.dataDir}/.config";
+              XDG_DATA_HOME = "${cfg.dataDir}/.local/share";
+              XDG_STATE_HOME = "${cfg.dataDir}/.local/state";
+              XDG_CACHE_HOME = "${cfg.dataDir}/.cache";
+              OPENCHAMBER_DATA_DIR = "${cfg.dataDir}/.config/openchamber";
+            };
+            serviceConfig = {
+              ExecStart =
+                if cfg.uiPasswordFile == null then
+                  lib.escapeShellArgs serveArgs
+                else
+                  # Upstream reads only `--ui-password` /
+                  # `OPENCHAMBER_UI_PASSWORD` (`bin/lib/cli-args.js:61`,
+                  # `server/index.js:1622`) — no `*_FILE` var exists, so the
+                  # LoadCredential-staged secret is exported into the real
+                  # env var here. A wrapper (not `EnvironmentFile`) keeps
+                  # the secret out of the world-readable store and out of
+                  # `/proc` cmdlines (`--ui-password` on argv would leak).
+                  # Fails fast on an empty credential instead of serving
+                  # an unprotected network bind.
+                  "${pkgs.writeShellScript "openchamber-serve" ''
+                    set -euo pipefail
+                    credential="$CREDENTIALS_DIRECTORY/ui-password"
+                    if [ ! -s "$credential" ]; then
+                      echo "openchamber: UI password credential is empty or missing: $credential" >&2
+                      exit 1
+                    fi
+                    export OPENCHAMBER_UI_PASSWORD="$(cat "$credential")"
+                    exec ${lib.escapeShellArgs serveArgs}
+                  ''}";
+              Restart = "on-failure";
+              User = cfg.user;
+              Group = cfg.group;
+              # Owned by User:Group; keeps state across upgrades.
+              StateDirectory = "openchamber";
+              # Upstream resolves its data dir from HOME/XDG (or
+              # OPENCHAMBER_DATA_DIR above); give the server a real writable
+              # cwd instead of systemd's `/` default, and allow writes there.
+              WorkingDirectory = cfg.dataDir;
+              ReadWritePaths = [ cfg.dataDir ];
+            }
+            // lib.optionalAttrs (cfg.uiPasswordFile != null) {
+              # LoadCredential stages the secret where the static service
+              # user can read it; the raw host path may not be accessible
+              # to it otherwise.
+              LoadCredential = [ "ui-password:${cfg.uiPasswordFile}" ];
+            };
+          };
         }
-      ))
-    ]
-  );
+        # CLI on PATH for a custom service account (pairing/management
+        # commands like `openchamber status` / `openchamber tunnel` run as
+        # the service user). Gated on static conditions only: testing
+        # `users.users` for the account here would recurse infinitely (the
+        # merge cannot decide its own key set), so an externally-managed
+        # account (LDAP/SSSD) must opt out via `installCliForUser = false`
+        # instead — see that option.
+        (lib.mkIf (cfg.installCliForUser && !isSystemUser) {
+          users.users.${cfg.user}.packages = [ cfg.package ];
+        })
+        (lib.mkIf (cfg.settings != { }) (
+          let
+            settingsFile = jsonFormat.generate "openchamber-settings.json" cfg.settings;
+          in
+          {
+            # Freeform settings (default `{}` = this block vanishes, behavior
+            # unchanged). Upstream has no settings env var or `serve` flag —
+            # the live document is `$OPENCHAMBER_DATA_DIR/settings.json`
+            # (`server/index.js:320`, rooted at `OPENCHAMBER_DATA_DIR` or
+            # `~/.config/openchamber`), so seed it before every start. Runs
+            # as the service user, so `$HOME` resolves for personal-user
+            # instances while `OPENCHAMBER_DATA_DIR` covers the default
+            # system user. Declarative settings win on every (re)start:
+            # edits made through the running UI are overwritten — keep them
+            # in Nix instead.
+            # NOTE: the store copy is world-readable — never put secrets in
+            # `settings`; use `uiPasswordFile` / credentials for secrets.
+            systemd.services.openchamber.serviceConfig.ExecStartPre = [
+              "${pkgs.writeShellScript "openchamber-install-settings" ''
+                set -euo pipefail
+                dest="''${OPENCHAMBER_DATA_DIR:-$HOME/.config/openchamber}/settings.json"
+                mkdir -p "$(dirname "$dest")"
+                cp -f ${settingsFile} "$dest"
+                chmod 0600 "$dest"
+              ''}"
+            ];
+          }
+        ))
+      ]
+    ))
+  ];
 }

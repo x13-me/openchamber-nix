@@ -89,23 +89,21 @@ nix run github:x13-me/openchamber-nix#openchamber-server -- serve --port 3000
 nix profile install github:x13-me/openchamber-nix#openchamber-gui
 ```
 
-Home Manager:
+Home Manager (single import — the overlay is bundled by the module):
 
 ```nix
 { inputs, ... }: {
   imports = [ inputs.openchamber-nix.homeManagerModules.default ];
-  nixpkgs.overlays = [ inputs.openchamber-nix.overlays.default ];
   programs.openchamber-gui.enable = true;
   programs.openchamber-server.enable = true; # ad-hoc `openchamber serve`
 }
 ```
 
-NixOS module:
+NixOS module (single import — the overlay is bundled by the module):
 
 ```nix
 { inputs, ... }: {
   imports = [ inputs.openchamber-nix.nixosModules.default ];
-  nixpkgs.overlays = [ inputs.openchamber-nix.overlays.default ];
   services.openchamber = {
     enable = true;
     port = 3000;
@@ -139,7 +137,9 @@ NixOS module:
 }
 ```
 
-Without the overlay, inject the flake's package set instead:
+The overlay (`overlays.default`) is bundled by both modules, so no
+separate `nixpkgs.overlays` line is needed — it remains exposed for manual
+use. To override the package set instead, inject the flake's package set:
 
 ```nix
 { inputs, ... }: {

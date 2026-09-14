@@ -1,9 +1,11 @@
 # Home Manager module: `programs.openchamber-gui` + `programs.openchamber-server`.
 #
+# Self-contained: the flake's overlay is bundled via `nixpkgs.overlays`
+# below, so a single import suffices:
+#
 # ```nix
 # {
 #   imports = [ inputs.openchamber-nix.homeManagerModules.default ];
-#   nixpkgs.overlays = [ inputs.openchamber-nix.overlays.default ];
 #   programs.openchamber-gui.enable = true;
 #   programs.openchamber-server.enable = true; # ad-hoc `openchamber serve`
 # }
@@ -58,6 +60,12 @@ in
   };
 
   config = lib.mkMerge [
+    {
+      # Bundle the flake's overlay so consumers need only this import.
+      # Imported by relative path (not via flake `self`) to avoid
+      # self-reference cycles. `overlays.default` remains exposed for manual use.
+      nixpkgs.overlays = [ (import ../../nix/overlay.nix) ];
+    }
     (lib.mkIf cfg.enable {
       home.packages = [ cfg.package ];
     })
