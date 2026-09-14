@@ -425,7 +425,7 @@ lib.makeExtensible (_final: {
       default ? null,
     }:
     lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
+      type = lib.types.nullOr lib.types.nonEmptyStr;
       inherit default;
       example = "http://127.0.0.1:3000";
       description = ''
@@ -486,6 +486,9 @@ lib.makeExtensible (_final: {
           "127.0.0.1"
         else
           effectiveHost;
+      isBareIpv6 =
+        lib.hasInfix ":" dialHost && !(lib.hasPrefix "[" dialHost && lib.hasSuffix "]" dialHost);
+      urlHost = if isBareIpv6 then "[${dialHost}]" else dialHost;
     in
-    "http://${dialHost}:${toString port}";
+    "http://${urlHost}:${toString port}";
 })

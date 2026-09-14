@@ -131,6 +131,7 @@ effective host; wildcard binds `0.0.0.0`/`::` are dialed via
 | NixOS + home-manager, service enabled | unset | Wrapped GUI, auto-pointed at the service |
 | NixOS + home-manager, service enabled | explicit | Wrapped GUI, pointed at the explicit URL |
 | NixOS + home-manager, service disabled/absent | unset | Plain unwrapped GUI (own local server) |
+| NixOS + home-manager, service disabled/absent | explicit | Wrapped GUI, pointed at the explicit URL |
 | Standalone home-manager (no `osConfig`) | unset | Plain unwrapped GUI (own local server) |
 | Standalone home-manager | explicit | Wrapped GUI, pointed at the explicit URL |
 
