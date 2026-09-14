@@ -12,7 +12,7 @@ packages
 ├── openchamber-server   # node wrapper around packages/web bin/cli (serves builtin web UI)
 apps: openchamber-gui (default), openchamber-server
 nixosModules.default (+ legacy alias .openchamber)  # services.openchamber
-homeManagerModules.default (+ alias homeModules.default)  # programs.openchamber-gui + programs.openchamber-server
+homeManagerModules.default (+ alias homeModules.default)  # programs.openchamber (gui + server)
 overlays.default
 devShells (bun + nodejs_22 + git + just + formatter tools)
 checks.formatting       # treefmt --ci
@@ -39,7 +39,7 @@ packages/
 └── openchamber-gui/package.nix
 modules/
 ├── nixos/default.nix      # _class="nixos", services.openchamber
-├── home-manager/default.nix  # _class="homeManager", programs.openchamber-gui
+├── home-manager/default.nix  # _class="homeManager", programs.openchamber
 └── generic/settings.nix   # shared freeform settings option (RFC42 JSON)
 lib/default.nix            # makeExtensible helpers, nixdoc comments
 versions.nix               # single machine-updated file (updater only)
@@ -94,8 +94,8 @@ Home Manager (single import — the overlay is bundled by the module):
 ```nix
 { inputs, ... }: {
   imports = [ inputs.openchamber-nix.homeManagerModules.default ];
-  programs.openchamber-gui.enable = true;
-  programs.openchamber-server.enable = true; # ad-hoc `openchamber serve`
+  programs.openchamber.gui.enable = true;
+  programs.openchamber.server.enable = true; # ad-hoc `openchamber serve`
 }
 ```
 

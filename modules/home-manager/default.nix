@@ -1,4 +1,4 @@
-# Home Manager module: `programs.openchamber-gui` + `programs.openchamber-server`.
+# Home Manager module: `programs.openchamber` (`gui` + `server`).
 #
 # Self-contained: the flake's overlay is bundled via `nixpkgs.overlays`
 # below, so a single import suffices:
@@ -6,8 +6,8 @@
 # ```nix
 # {
 #   imports = [ inputs.openchamber-nix.homeManagerModules.default ];
-#   programs.openchamber-gui.enable = true;
-#   programs.openchamber-server.enable = true; # ad-hoc `openchamber serve`
+#   programs.openchamber.gui.enable = true;
+#   programs.openchamber.server.enable = true; # ad-hoc `openchamber serve`
 # }
 # ```
 {
@@ -29,13 +29,13 @@ let
       extpkgs.${name}
     else
       throw "openchamber-nix: `${name}` not found — apply the overlay (`nixpkgs.overlays = [ inputs.openchamber-nix.overlays.default ];`) or inject the flake package set (`_module.args.extpkgs = inputs.openchamber-nix.legacyPackages.\${pkgs.stdenv.hostPlatform.system};`).";
-  cfg = config.programs.openchamber-gui;
+  cfg = config.programs.openchamber;
 in
 {
   _class = "homeManager";
   _file = ./default.nix;
 
-  options.programs.openchamber-gui = {
+  options.programs.openchamber.gui = {
     enable = lib.mkEnableOption "OpenChamber desktop GUI";
 
     package = lib.mkOption {
@@ -48,7 +48,7 @@ in
     # sorts raw lines and would scramble multi-line option definitions.
   };
 
-  options.programs.openchamber-server = {
+  options.programs.openchamber.server = {
     enable = lib.mkEnableOption "OpenChamber server + CLI (ad-hoc `openchamber serve`)";
 
     package = lib.mkOption {
@@ -66,11 +66,11 @@ in
       # self-reference cycles. `overlays.default` remains exposed for manual use.
       nixpkgs.overlays = [ (import ../../nix/overlay.nix) ];
     }
-    (lib.mkIf cfg.enable {
-      home.packages = [ cfg.package ];
+    (lib.mkIf cfg.gui.enable {
+      home.packages = [ cfg.gui.package ];
     })
-    (lib.mkIf config.programs.openchamber-server.enable {
-      home.packages = [ config.programs.openchamber-server.package ];
+    (lib.mkIf cfg.server.enable {
+      home.packages = [ cfg.server.package ];
     })
   ];
 }
