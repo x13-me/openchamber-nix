@@ -34,10 +34,7 @@ let
     in
     public
     // lib.optionalAttrs (public ? openchamber-gui) {
-      openchamber-gui-appimage = public.openchamber-gui;
-    }
-    // lib.optionalAttrs (public ? openchamber-server) {
-      default = public.openchamber-server;
+      default = public.openchamber-gui;
     }
   );
 
@@ -63,13 +60,13 @@ in
         type = "app";
         program = "${built.openchamber-gui}/bin/openchamber-gui";
       };
+      default = {
+        type = "app";
+        program = "${built.openchamber-gui}/bin/openchamber-gui";
+      };
     }
     // lib.optionalAttrs (built ? openchamber-server) {
       openchamber-server = {
-        type = "app";
-        program = "${built.openchamber-server}/bin/openchamber";
-      };
-      default = {
         type = "app";
         program = "${built.openchamber-server}/bin/openchamber";
       };

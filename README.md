@@ -8,10 +8,9 @@ with two packages, following the [helium-nix](https://github.com/x13-me/helium-n
 
 ```
 packages
-├── openchamber-server   # node wrapper around packages/web bin/cli (default, serves builtin web UI)
-├── openchamber-gui      # prebuilt Electron AppImage via wrapType2
-└── openchamber-gui-appimage  # alias of openchamber-gui
-apps: openchamber-server, openchamber-gui
+├── openchamber-gui      # prebuilt Electron AppImage via wrapType2 (default)
+├── openchamber-server   # node wrapper around packages/web bin/cli (serves builtin web UI)
+apps: openchamber-gui (default), openchamber-server
 nixosModules.default (+ legacy alias .openchamber)  # services.openchamber
 homeManagerModules.default (+ alias homeModules.default)  # programs.openchamber-gui + programs.openchamber-server
 overlays.default
@@ -85,7 +84,8 @@ As a flake input:
 Ad-hoc run / install:
 
 ```bash
-nix run github:x13-me/openchamber-nix -- serve --port 3000
+nix run github:x13-me/openchamber-nix
+nix run github:x13-me/openchamber-nix#openchamber-server -- serve --port 3000
 nix profile install github:x13-me/openchamber-nix#openchamber-gui
 ```
 
