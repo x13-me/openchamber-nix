@@ -47,6 +47,7 @@ let
   # `127.0.0.1` stays listed explicitly for readability; the regex covers
   # the rest of numeric `127/8` the way `net.isIP(...) === 4` does
   # (so `127.foo` is NOT loopback here, matching upstream's refusal).
+  # Each octet is a strict 0-255 class so `127.0.0.999` is NOT loopback.
   isLoopbackHost =
     let
       normalized = lib.toLower effectiveHost;
@@ -57,7 +58,7 @@ let
       "::1"
       "[::1]"
     ]
-    || builtins.match "127(\\.[0-9]{1,3}){1,3}" normalized != null;
+    || builtins.match "127(\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){1,3}" normalized != null;
   # True while the service account is defined in this evaluation (either
   # the auto-created `openchamber` system account or a declared login
   # user). An externally-managed account (LDAP/SSSD) is unknown here —
@@ -274,9 +275,17 @@ in
         # service account is known to this evaluation. An
         # externally-managed account (LDAP/SSSD, ...) must pre-create the
         # directory itself with correct ownership (see `dataDir` docs).
-        systemd.tmpfiles.rules = lib.mkIf (
-          toString cfg.dataDir != "/var/lib/openchamber" && accountDefined
-        ) [ "d ${toString cfg.dataDir} 0750 ${cfg.user} ${cfg.group} -" ];
+        # Paths at or under `/var/lib/openchamber` are already owned via
+        # `StateDirectory`, so no redundant rule (covers `.../sub` too).
+        systemd.tmpfiles.rules =
+          let
+            dataDirStr = toString cfg.dataDir;
+            underStateDir =
+              dataDirStr == "/var/lib/openchamber" || lib.hasPrefix "/var/lib/openchamber/" dataDirStr;
+          in
+          lib.mkIf (!underStateDir && accountDefined) [
+            "d ${dataDirStr} 0750 ${cfg.user} ${cfg.group} -"
+          ];
 
         systemd.services.openchamber = {
           description = "OpenChamber server";

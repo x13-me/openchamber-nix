@@ -15,3 +15,7 @@ out/
 .codegraph/
 .remember/tmp/
 .remember/logs/
+
+# Ignore kernel core dumps (e.g. core.495309 from crashes)
+core
+core.*
