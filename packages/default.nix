@@ -1,7 +1,7 @@
 # Package scope: `makeScope` lets openchamber-server share the internal
-# built-source build via `self.callPackage`.
+# node-modules FOD via `self.callPackage`.
 #
-# `builtSource` is intentionally internal — `nix/default.nix` strips it
+# `nodeModules` is intentionally internal — `nix/default.nix` strips it
 # from the public `packages` output (it stays visible in `legacyPackages`).
 #
 # NOTE: no keep-sorted markers here on purpose — keep-sorted sorts raw
@@ -9,11 +9,11 @@
 # `imports`). Multi-line bindings would be scrambled.
 { pkgs }:
 pkgs.lib.makeScope pkgs.newScope (self: {
-  builtSource = self.callPackage ./built-source/package.nix { };
+  nodeModules = self.callPackage ./node-modules/package.nix { };
 
   openchamber-gui = self.callPackage ./openchamber-gui/package.nix { };
 
   openchamber-server = self.callPackage ./openchamber-server/package.nix {
-    inherit (self) builtSource;
+    inherit (self) nodeModules;
   };
 })

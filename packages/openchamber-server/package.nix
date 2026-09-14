@@ -1,8 +1,10 @@
-# OpenChamber server + CLI (`openchamber serve`), wrapping the built
-# `@openchamber/web` workspace with nodejs_22.
+# OpenChamber server + CLI (`openchamber serve`): prebuilt `@openchamber/web`
+# release tarball repackaged with production `node_modules`, wrapped with
+# nodejs_22.
 {
   lib,
   stdenv,
+  fetchurl,
   makeWrapper,
   nodejs_22,
   cacert,
@@ -10,24 +12,36 @@
   git,
   openssh,
   bash,
-  builtSource,
+  nodeModules,
 }:
+let
+  versions = import ../../versions.nix;
+  webSrc = fetchurl {
+    url = "https://github.com/openchamber/openchamber/releases/download/v${versions.version}/openchamber-web-${versions.version}.tgz";
+    hash = versions.webHash;
+  };
+in
 stdenv.mkDerivation {
   pname = "openchamber-server";
-  inherit (builtSource) version;
-  src = builtSource;
+  inherit (versions) version;
+  src = webSrc;
+  # Fail fast when upstream rearranges the tarball layout.
+  sourceRoot = "package";
   dontBuild = true;
   nativeBuildInputs = [ makeWrapper ];
   installPhase = ''
     runHook preInstall
     mkdir -p $out/lib/openchamber $out/bin
-    cp -a $src/package.json $src/node_modules $src/packages $out/lib/openchamber/
-    # Tolerate either text (bun.lock) or binary (bun.lockb) lockfile.
-    for lockfile in "$src"/bun.lock "$src"/bun.lockb; do
-      [ -e "$lockfile" ] && cp -a "$lockfile" $out/lib/openchamber/
+    # Upstream's published layout: ready-built `dist/` + `server/` +
+    # `bin/cli.js`. Halt with a clear error when that contract breaks.
+    for required in package.json bin/cli.js server/index.js dist/index.html; do
+      [ -e "$required" ] || { echo "openchamber-server: missing $required in openchamber-web tarball" >&2; exit 1; }
     done
+    cp -a package.json bin server dist $out/lib/openchamber/
+    [ -e public ] && cp -a public $out/lib/openchamber/
+    cp -a ${nodeModules} $out/lib/openchamber/node_modules
     makeWrapper ${nodejs_22}/bin/node $out/bin/openchamber \
-      --add-flags "$out/lib/openchamber/packages/web/bin/cli.js" \
+      --add-flags "$out/lib/openchamber/bin/cli.js" \
       --prefix PATH : "${
         lib.makeBinPath [
           opencode

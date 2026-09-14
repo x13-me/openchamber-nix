@@ -73,7 +73,7 @@ in
     }
   );
 
-  # Raw scope (unfiltered, incl. internal `builtSource`); non-derivations
+  # Raw scope (unfiltered, incl. internal `nodeModules`); non-derivations
   # from `makeScope` bookkeeping (`callPackage`, `overrideScope`, …) are
   # dropped so every exposed member is a real package.
   legacyPackages = forAllSystems (pkgs: lib.filterAttrs (_: lib.isDerivation) (scopeFor pkgs));

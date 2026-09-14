@@ -10,12 +10,12 @@
 # `imports`). Multi-line bindings would be scrambled.
 _: prev:
 let
-  builtSource = prev.callPackage ../packages/built-source/package.nix { };
+  nodeModules = prev.callPackage ../packages/node-modules/package.nix { };
 in
 {
   openchamber-gui = prev.callPackage ../packages/openchamber-gui/package.nix { };
 
   openchamber-server = prev.callPackage ../packages/openchamber-server/package.nix {
-    inherit builtSource;
+    inherit nodeModules;
   };
 }
