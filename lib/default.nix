@@ -401,4 +401,91 @@ lib.makeExtensible (_final: {
         for secrets.
       '';
     };
+
+  /**
+    Server URL option for `programs.openchamber.gui`.
+
+    When set, the Home Manager module installs a wrapped GUI that skips
+    its bundled local server (`OPENCHAMBER_SKIP_LOCAL_SERVER=1`) and
+    points at the given server (`OPENCHAMBER_SERVER_URL=<url>`).
+
+    NOTE: both variables are undocumented upstream — honored by the
+    Electron main process at the pinned rev (`v1.23.0/d073858`:
+    `packages/electron/main.mjs:1436-1439` skips the local server,
+    `:2984-3034` overrides the connection target from the env). They may
+    change or disappear in future upstream releases.
+
+    # Arguments
+
+    - `default`: server URL or `null` (defaults to `null`, i.e. plain
+      unwrapped install with the GUI's own local server).
+  */
+  mkGuiServerUrlOption =
+    {
+      default ? null,
+    }:
+    lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      inherit default;
+      example = "http://127.0.0.1:3000";
+      description = ''
+        URL of the OpenChamber server the desktop GUI should connect to
+        instead of spawning its own local server (sets
+        OPENCHAMBER_SKIP_LOCAL_SERVER=1 and OPENCHAMBER_SERVER_URL=<url>
+        on the wrapped `openchamber-gui` binary).
+
+        Both variables are undocumented upstream (honored by the Electron
+        main process at the pinned rev) and may change or disappear in
+        future upstream releases.
+
+        When left `null` while home-manager runs as a NixOS submodule
+        with `services.openchamber.enable = true`, the GUI auto-points at
+        that service (see `guiServerUrlFromService`); otherwise the plain
+        unwrapped package is installed.
+      '';
+    };
+
+  /**
+    Build the GUI server URL for a `services.openchamber` bind.
+
+    Mirrors the service's effective-host logic (`lan` fills a
+    loopback-default `host` in as `0.0.0.0`; an explicit `host` wins),
+    then maps wildcard binds (`0.0.0.0`, `::`, `[::]`) back to loopback
+    (`127.0.0.1`): the service must listen on the wildcard, but a local
+    GUI dials the loopback address.
+
+    # Arguments
+
+    - `host`: service bind host (defaults to `"127.0.0.1"`).
+    - `lan`: LAN-bind shortcut (defaults to `false`).
+    - `port`: service port (defaults to `3000`).
+
+    # Example
+
+    ```nix
+    guiServerUrlFromService { host = "127.0.0.1"; lan = true; port = 3000; }
+    # => "http://127.0.0.1:3000"
+    ```
+  */
+  guiServerUrlFromService =
+    {
+      host ? "127.0.0.1",
+      lan ? false,
+      port ? 3000,
+    }:
+    let
+      effectiveHost = if lan && host == "127.0.0.1" then "0.0.0.0" else host;
+      dialHost =
+        if
+          builtins.elem effectiveHost [
+            "0.0.0.0"
+            "::"
+            "[::]"
+          ]
+        then
+          "127.0.0.1"
+        else
+          effectiveHost;
+    in
+    "http://${dialHost}:${toString port}";
 })

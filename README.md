@@ -99,6 +99,41 @@ Home Manager (single import — the overlay is bundled by the module):
 }
 ```
 
+### GUI → server connection (`programs.openchamber.gui.serverUrl`)
+
+By default the GUI spawns its own bundled local server. Set `serverUrl`
+to point it at an already-running server instead:
+
+```nix
+{
+  programs.openchamber.gui = {
+    enable = true;
+    serverUrl = "http://127.0.0.1:3000";
+  };
+}
+```
+
+When set, the module installs a wrapped `openchamber-gui`
+(`symlinkJoin` + `makeWrapper` around the AppImage repackaging) with
+`OPENCHAMBER_SKIP_LOCAL_SERVER=1` and
+`OPENCHAMBER_SERVER_URL=<url>`. Both variables are **undocumented
+upstream** (honored by the Electron main process at the pinned rev) and
+may change or disappear in future upstream releases.
+
+When home-manager runs as a NixOS submodule alongside
+`services.openchamber.enable = true`, an unset `serverUrl` auto-points
+at that service (`http://<host>:<port>`, mirroring the service's
+effective host; wildcard binds `0.0.0.0`/`::` are dialed via
+`127.0.0.1`). An explicit `serverUrl` always wins.
+
+| Setup | `serverUrl` | Result |
+|---|---|---|
+| NixOS + home-manager, service enabled | unset | Wrapped GUI, auto-pointed at the service |
+| NixOS + home-manager, service enabled | explicit | Wrapped GUI, pointed at the explicit URL |
+| NixOS + home-manager, service disabled/absent | unset | Plain unwrapped GUI (own local server) |
+| Standalone home-manager (no `osConfig`) | unset | Plain unwrapped GUI (own local server) |
+| Standalone home-manager | explicit | Wrapped GUI, pointed at the explicit URL |
+
 NixOS module (single import — the overlay is bundled by the module):
 
 ```nix
