@@ -43,3 +43,6 @@ jobs:
 
       - name: Build
         run: nix build ".#${{ matrix.package }}"
+
+      - name: Push to Cachix
+        run: cachix push x13 ./result

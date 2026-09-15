@@ -9,7 +9,7 @@ with two packages, following the [helium-nix](https://github.com/x13-me/helium-n
 ```
 packages
 ├── openchamber-gui      # prebuilt Electron AppImage via wrapType2 (default)
-├── openchamber-server   # node wrapper around packages/web bin/cli (serves builtin web UI)
+├── openchamber-server   # prebuilt openchamber-web tarball + prod node_modules, node wrapper (serves builtin web UI)
 apps: openchamber-gui (default), openchamber-server
 nixosModules.default (+ legacy alias .openchamber)  # services.openchamber
 homeManagerModules.default (+ alias homeModules.default)  # programs.openchamber (gui + server)
@@ -17,7 +17,7 @@ overlays.default
 devShells (bun + nodejs_22 + git + just + formatter tools)
 checks.formatting       # treefmt --ci
 formatter               # treefmt: nixfmt + deadnix + statix + keep-sorted
-legacyPackages          # raw package scope (incl. internal builtSource)
+legacyPackages          # raw package scope (incl. internal nodeModules)
 hydraJobs               # per-package × per-system jobs
 lib                     # makeExtensible helpers (archOf, mk*Option)
 ```
@@ -33,8 +33,8 @@ nix/
 ├── overlay.nix            # system-independent _: prev: + prev.callPackage only
 └── formatter.nix          # treefmt.withConfig (nixpkgs only, no extra inputs)
 packages/
-├── default.nix            # makeScope scope (server uses builtSource)
-├── built-source/package.nix       # internal: bun install + ui/web build
+├── default.nix            # makeScope scope (server shares the nodeModules FOD)
+├── node-modules/package.nix       # internal: production node_modules FOD for the web tarball
 ├── openchamber-server/package.nix # callPackage-compatible, no outer pkgs capture
 └── openchamber-gui/package.nix
 modules/
@@ -185,9 +185,11 @@ use. To override the package set instead, inject the flake's package set:
 
 ## Features
 
-- **Server** (`openchamber-server`): source-built `@openchamber/web`
-  (`bun install --frozen-lockfile` + `packages/ui` build + `vite build`),
-  wrapped with `nodejs_22` and `opencode`, `git`, `openssh`, `bash` on
+- **Server** (`openchamber-server`): prebuilt `@openchamber/web` release
+  tarball (`openchamber-web-<version>.tgz`: ready-built `dist/` + `server/`
+  + `bin/cli.js`) repackaged with a production `node_modules` tree
+  (fixed-output derivation, `npm install --omit=dev`), wrapped with
+  `nodejs_22` and `opencode`, `git`, `openssh`, `bash` on
   `PATH`, plus `SSL_CERT_FILE` pointed at the Nix `cacert` bundle.
   Default port 3000, `OPENCHAMBER_*` env supported.
 - **Web UI**: embedded `dist/` assets inside `openchamber-server` — the
@@ -201,40 +203,53 @@ use. To override the package set instead, inject the flake's package set:
 ## Building Locally
 
 ```bash
-nix build .#openchamber-server   # needs network in builder (bun registry)
+nix build .#openchamber-server
 nix build .#openchamber-gui
 ```
 
-If your builder denies network in the sandbox:
+Both packages are pure — no special flags needed. The GUI repackages the
+upstream AppImage via fixed-output `fetchurl`, and the server repackages
+the upstream `openchamber-web-<version>.tgz` the same way, with production
+`node_modules` produced by a fixed-output derivation
+(`packages/node-modules/package.nix`).
 
-```bash
-nix build .#openchamber-server --option sandbox false
+### Why the server build uses the network (fixed-output derivations)
+
+The production `node_modules` tree is built by `npm install --omit=dev`
+at *build* time, which downloads from the npm registry. Nix derivations
+are pure by default — but fixed-output derivations (FODs) are the
+sanctioned exception: their output is pinned by a content hash
+(`versions.nix`: one `nodeModules` hash per system), so Nix permits
+network inside that build alone. The hash is verified after the build; a
+mismatch fails loudly instead of shipping a wrong tree.
+
+Per-system hashes are required because npm installs platform-specific
+optional dependencies (`sherpa-onnx-linux-x64` vs `-linux-arm64`, ...),
+so the x86_64 and aarch64 trees differ. `versions.nix` carries one
+`nodeModules` hash per system (same pattern as the AppImage hashes); the
+updater computes the x86_64 hash natively on its runner and a dedicated
+aarch64 fill job computes the ARM hash natively on its runner — never
+cross-compiled (see `.github/update-openchamber.sh --fill-system`).
+
+### Binary cache
+
+Builds are cached on Cachix ([x13](https://app.cachix.org/cache/x13)):
+`flake.nix` already declares it as an `extra-substituter`, and CI pushes
+every updater test-build plus manual `build-openchamber.yml` dispatch
+with the `CACHIX_AUTH_TOKEN` secret — a version bump lands in cache
+without manual steps.
+
+To substitute (one copy-paste): `cachix use x13`, or add to your
+`nix.conf` (e.g. `~/.config/nix/nix.conf`):
+
+```text
+extra-substituters = https://x13.cachix.org
+extra-trusted-public-keys = x13.cachix.org-1:<public key>
 ```
 
-### Why builds need network (why can't you just build?)
-
-The server package compiles upstream's Bun workspace from source
-(`packages/built-source/package.nix`): `bun install --frozen-lockfile`
-downloads dependencies from the bun/npm registry at *build* time, and
-`vite build` may fetch remote fonts/assets. Nix derivations are pure by
-default — the sandbox blocks network — so a sandboxed build fails in the
-fetch/`bun install` phase with network errors, **not** because of a code
-bug. This is inherent to source builds without a vendored lockfile hash
-(`bun.lock` alone doesn't give Nix the content hashes it needs for
-fixed-output fetching).
-
-Your options, in order of preference:
-
-1. Build on a machine whose builder allows network (GitHub-hosted
-   runners work — that is why CI uses native `ubuntu-24.04` /
-   `ubuntu-24.04-arm` runners instead of sandbox-relaxed builds).
-2. Locally, relax the sandbox for that invocation only:
-    `nix build .#openchamber-server --option sandbox false`.
-3. The GUI package (`openchamber-gui`) never needs this: it repackages
-   the upstream AppImage via fixed-output `fetchurl`, which is pure.
-
-Sandboxing is deliberately **not** disabled in code — relaxing it is a
-local/CI policy decision, documented here instead.
+(The flake's `nixConfig` carries the substituter; only the public key
+needs trusting. Accept the flake config when prompted
+(`--accept-flake-config`) or set `accept-flake-config = true`.)
 
 ## Development
 
@@ -247,20 +262,27 @@ nix build .#checks.x86_64-linux.formatting  # run the formatting check as a deri
 ## Automated Maintenance
 
 - `versions.nix` is the single machine-updated file
-  (`version`, `rev`, `srcHash`, per-system AppImage hashes).
+  (`version`, `webHash`, `opencodeVersion`, per-system AppImage +
+  `nodeModules` hashes).
 - `.github/update-openchamber.sh` mirrors `update-helium.sh` (`--ci` /
   `--only-check` flags, `should_update` / `version` / `commit_message`
   outputs, `GH_TOKEN` auth, retry-on-404, `nix store prefetch-file` +
   conditional `nix flake update`): polls `releases/latest` (stable only,
-  prereleases excluded), validates the version format, dereferences
-  annotated tags to the commit SHA, prefetches the source NAR hash plus
-  both AppImage hashes, rewrites `versions.nix`, and runs
-  `nix flake update` (only under `--ci` on the update path).
+  prereleases excluded), validates the version format, prefetches the web
+  tarball hash plus both AppImage hashes, reads the expected opencode CLI
+  version from the tarball's `@opencode-ai/sdk` pin, computes the native
+  x86_64 `nodeModules` hash with a real FOD build, rewrites `versions.nix`,
+  and runs `nix flake update` (only under `--ci` on the update path).
+  `--fill-system <system>` recomputes just that system's `nodeModules`
+  hash with a native build on that arch and refuses to run cross-arch.
 - `update-openchamber-main.yml` (`32 * * * *`, hourly) is the single updater:
   `main` follows the upstream latest release — `--only-check` gates, then
-  update → auto-commit + tag `v<version>` → 2 packages × 2 systems
-  test-build matrix.
-- `build-openchamber.yml` (`workflow_dispatch`) builds the same matrix on demand.
+  update → auto-commit → aarch64 fill job (native `ubuntu-24.04-arm`
+  runner computes the aarch64 `nodeModules` hash and commits it) →
+  2 packages × 2 systems test-build matrix (each cell pushed to the `x13`
+  Cachix cache) → tag `v<version>` once the matrix is green.
+- `build-openchamber.yml` (`workflow_dispatch`) builds the same matrix on demand
+  and pushes the results to the `x13` Cachix cache.
 - `flakehub-publish-tagged.yml` (`v?[0-9]+.[0-9]+.[0-9]+*` tags / dispatch)
   is the single publish path: pushes of `v*` tags (created by the updater
   on main, plus manual tags/dispatch) publish that version to FlakeHub as
@@ -276,6 +298,6 @@ nix build .#checks.x86_64-linux.formatting  # run the formatting check as a deri
   both Linux systems: `nix flake check --no-build --all-systems` plus
   `nix fmt -- --ci`) is kept alongside the replicated workflows, as are
   the flake's `checks` / `devShells` / formatter / modules.
-- Binary cache: [openchamber](https://app.cachix.org/cache/openchamber) —
-  set the `CACHIX_AUTH_TOKEN` secret. Publishing to FlakeHub uses OIDC
+- Binary cache: [x13](https://app.cachix.org/cache/x13) — see
+  [Binary cache](#binary-cache). Publishing to FlakeHub uses OIDC
   (`id-token: write`), no extra secret needed.
