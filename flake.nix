@@ -3,11 +3,12 @@
   description = "OpenChamber on Nix";
 
   # Binary cache: CI pushes every updater test-build here (see README
-  # "Binary cache"). The public key is trusted out-of-band — the owner
-  # adds `trusted-public-keys = [ "x13.cachix.org-1:<key>" ];` below.
+  # "Binary cache"). The x13 public key is wired below via
+  # extra-trusted-public-keys (appended to defaults, preserving trust
+  # for cache.nixos.org).
   nixConfig = {
     extra-substituters = [ "https://x13.cachix.org" ];
-    trusted-public-keys = [ "x13.cachix.org-1:+6Eqv1V8J356Krr1jHrho52ecbP2JzqCClUQPdf6aHU=" ];
+    extra-trusted-public-keys = [ "x13.cachix.org-1:+6Eqv1V8J356Krr1jHrho52ecbP2JzqCClUQPdf6aHU=" ];
   };
 
   inputs = {
