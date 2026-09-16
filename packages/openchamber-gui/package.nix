@@ -72,10 +72,21 @@ appimageTools.wrapType2 {
         exit 1
       fi
       # `magick identify` (v7) vs standalone `identify` (v6/compat).
-      if "$magickCmd" identify -version >/dev/null 2>&1; then
-        identifyCmd="$magickCmd identify"
+      # `convert` is ImageMagick v6, where `convert identify -version`
+      # would try to convert a file named `identify`; the capability
+      # lives in the standalone `identify` tool instead.
+      if [ "$magickCmd" = "magick" ]; then
+        if magick identify -version >/dev/null 2>&1; then
+          identifyCmd="magick identify"
+        else
+          identifyCmd="identify"
+        fi
       else
         identifyCmd="identify"
+      fi
+      if ! $identifyCmd -version >/dev/null 2>&1; then
+        echo "error: openchamber-gui: no ImageMagick identify tool ($identifyCmd) on PATH" >&2
+        exit 1
       fi
       srcIcon=""
       srcPixels=0
@@ -100,7 +111,7 @@ appimageTools.wrapType2 {
         for iconName in openchamber-gui openchamber; do
           dest="$out/share/icons/hicolor/''${size}x''${size}/apps/''${iconName}.png"
           mkdir -p "$(dirname "$dest")"
-          "$magickCmd" "$srcIcon" -resize "''${size}x''${size}" -strip "$dest"
+          "$magickCmd" "$srcIcon" -resize "''${size}x''${size}" -strip -define png:exclude-chunks=date "$dest"
           chmod 444 "$dest"
         done
       done
@@ -110,12 +121,10 @@ appimageTools.wrapType2 {
         install -Dm444 "$srcIcon" "$out/share/pixmaps/''${iconName}.png"
       done
       # Upstream declares `Icon=openchamber`; point the known entry at
-      # the `openchamber-gui` name we guarantee at every size. Both names
-      # are installed everywhere, so any other entry keeping
-      # `Icon=openchamber` still resolves.
-      if [ -f "$out/share/icons/hicolor/48x48/apps/openchamber-gui.png" ]; then
-        sed -i 's|^Icon=openchamber$|Icon=openchamber-gui|' $out/share/applications/*.desktop
-      fi
+      # the `openchamber-gui` name the render loop above guarantees at
+      # every size (or exits 1). Both names are installed everywhere,
+      # so any other entry keeping `Icon=openchamber` still resolves.
+      sed -i 's|^Icon=openchamber$|Icon=openchamber-gui|' $out/share/applications/*.desktop
       # Fail-safe, not fail-hard: warn if any installed entry still names
       # an icon we do not ship, so future upstream renames surface at
       # build time instead of as a silent placeholder in the AppMenu.
