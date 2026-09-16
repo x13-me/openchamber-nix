@@ -269,8 +269,10 @@ nix build .#checks.x86_64-linux.formatting  # run the formatting check as a deri
   outputs, `GH_TOKEN` auth, retry-on-404, `nix store prefetch-file` +
   conditional `nix flake update`): polls `releases/latest` (stable only,
   prereleases excluded), validates the version format, prefetches the web
-  tarball hash plus both AppImage hashes, reads the expected opencode CLI
-  version from the tarball's `@opencode-ai/sdk` pin, computes the native
+  tarball hash plus both AppImage hashes, reads the opencode release-line pin
+  from the tarball's `@opencode-ai/sdk` pin (informational only — the server
+  declares no minimum CLI version; drives only the major-skew warning,
+  patch/minor drift stays silent), computes the native
   x86_64 `nodeModules` hash with a real FOD build, rewrites `versions.nix`,
   and runs `nix flake update` (only under `--ci` on the update path).
   `--fill-system <system>` recomputes just that system's `nodeModules`
