@@ -122,10 +122,11 @@ write_versions_nix() {
 {
   version = "$1";
   webHash = "$2";
-  # Upstream-expected opencode CLI version: the published web tarball's
-  # @opencode-ai/sdk pin (tracks the CLI release line; the server has no
-  # separate binary-version gate). Maintained by
-  # .github/update-openchamber.sh; drives the opencodePackage skew warning.
+  # Opencode CLI release-line pin: the published web tarball's
+  # @opencode-ai/sdk pin (informational basis for the major-skew warning;
+  # the server declares no minimum CLI version). Maintained by
+  # .github/update-openchamber.sh; drives the opencodePackage major-skew
+  # warning.
   opencodeVersion = "$7";
   systems = {
     x86_64-linux = {
@@ -143,10 +144,10 @@ write_versions_nix() {
 EOF
 }
 
-# Extract the upstream-expected opencode CLI version from the published web
+# Extract the opencode CLI release-line pin from the published web
 # tarball: its dependencies pin @opencode-ai/sdk, which tracks the CLI
-# release line (no separate binary-version gate exists server-side — the
-# wrapper resolves `opencode` off PATH).
+# release line (informational only — the server declares no minimum CLI
+# version; the wrapper resolves `opencode` off PATH).
 extract_opencode_version() {
     version="$1"
     tmpdir=$(mktemp -d)
@@ -287,7 +288,7 @@ main() {
     new_x86_64_appimage=$(prefetch "https://github.com/${repo}/releases/download/${remote_tag}/OpenChamber-${semantic_version}-linux-x86_64.AppImage")
     new_aarch64_appimage=$(prefetch "https://github.com/${repo}/releases/download/${remote_tag}/OpenChamber-${semantic_version}-linux-arm64.AppImage")
 
-    echo "Extracting expected opencode version..."
+    echo "Extracting opencode release-line pin..."
     opencode_version=$(extract_opencode_version "$semantic_version")
 
     # The nodeModules FOD reads versions.nix at eval time, so write the new

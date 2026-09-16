@@ -248,15 +248,36 @@ in
       nixpkgs.overlays = [ (import ../../nix/overlay.nix) ];
     }
     {
-      # Managed-binary drift is advisory only: warn (never assert) when
-      # the configured binary's version differs from the
-      # upstream-expected one, so a lagging nixpkgs keeps evaluating.
+      # Managed-binary major skew is advisory only: warn (never assert)
+      # when the configured binary's major version differs from the
+      # versions.nix release-line pin, so a lagging nixpkgs keeps
+      # evaluating. Patch/minor drift stays silent: neither
+      # `@opencode-ai/sdk` nor the pinned server declares any minimum CLI
+      # version, and the 1.15.x→1.18.x delta is additive-only.
       warnings =
         let
+          # Pure major parser: the first dot-separated component when
+          # numeric, else null — missing/garbage versions warn (fail-loud)
+          # rather than crashing evaluation.
+          majorOf =
+            version:
+            if !(builtins.isString version) then
+              null
+            else
+              let
+                firstComponent = builtins.head (lib.splitString "." version);
+                parsed = builtins.match "([0-9]+)" firstComponent;
+              in
+              if parsed == null then null else builtins.head parsed;
           actualOpencodeVersion = cfg.opencodePackage.version or null;
+          actualMajor = majorOf actualOpencodeVersion;
+          expectedMajor = majorOf versions.opencodeVersion;
+          isMajorSkew = actualMajor == null || expectedMajor == null || actualMajor != expectedMajor;
         in
-        lib.optionals (actualOpencodeVersion != null && actualOpencodeVersion != versions.opencodeVersion) [
-          "services.openchamber: opencodePackage version ${actualOpencodeVersion} differs from ${versions.opencodeVersion} expected by openchamber-server ${versions.version} (upstream packages/web @opencode-ai/sdk pin) — the managed OpenCode may drift; override services.openchamber.opencodePackage with a matching build, or wait for nixpkgs to catch up."
+        lib.optionals isMajorSkew [
+          "services.openchamber: opencodePackage version ${
+            if actualOpencodeVersion == null then "unknown" else toString actualOpencodeVersion
+          } has a different major version than ${toString versions.opencodeVersion} tracked in versions.nix (release-line pin, informational only — the server declares no minimum CLI version), so compatibility is unknown; override services.openchamber.opencodePackage with a matching major build, or wait for nixpkgs to catch up."
         ];
     }
     (lib.mkIf cfg.enable (

@@ -2,10 +2,11 @@
 {
   version = "1.23.1";
   webHash = "sha256-QrfCU3EpBPlI3OFLcsZIxSW0cHlzBejMbgzxESEW+tw=";
-  # Upstream-expected opencode CLI version: the published web tarball's
-  # @opencode-ai/sdk pin (tracks the CLI release line; the server has no
-  # separate binary-version gate). Maintained by
-  # .github/update-openchamber.sh; drives the opencodePackage skew warning.
+  # Opencode CLI release-line pin: the published web tarball's
+  # @opencode-ai/sdk pin (informational basis for the major-skew warning;
+  # the server declares no minimum CLI version). Maintained by
+  # .github/update-openchamber.sh; drives the opencodePackage major-skew
+  # warning.
   opencodeVersion = "1.18.30";
   systems = {
     x86_64-linux = {

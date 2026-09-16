@@ -319,10 +319,11 @@ lib.makeExtensible (_final: {
     Supplies the `opencode` binary placed on the server wrapper's PATH
     (the server resolves its managed binary via PATH — upstream
     `server/lib/opencode/env-runtime.js` — independent of `package`).
-    The upstream-expected version is tracked as `opencodeVersion` in
-    `versions.nix` (the `@opencode-ai/sdk` pin in `packages/web`, which
-    tracks the CLI release line); skew surfaces as a warning, never an
-    evaluation error, so a lagging nixpkgs keeps evaluating.
+    `opencodeVersion` in `versions.nix` is a release-line pin (the
+    `@opencode-ai/sdk` pin in `packages/web`), informational basis for
+    the major-skew warning; the server declares no minimum CLI version.
+    Major skew surfaces as a warning, never an evaluation error, so a
+    lagging nixpkgs keeps evaluating.
 
     # Arguments
 
@@ -342,11 +343,13 @@ lib.makeExtensible (_final: {
         managed OpenCode subprocess (rebuilt into the runnable server, so
         overriding this swaps the managed binary).
 
-        Should match the upstream-expected version (`opencodeVersion` in
-        `versions.nix`, from the pinned `packages/web`
-        `@opencode-ai/sdk`): skew only warns — evaluation keeps working
-        while nixpkgs lags — so override with a matching build or wait
-        for nixpkgs to catch up.
+        Should track the `opencodeVersion` release-line pin in
+        `versions.nix` (from the pinned `packages/web`
+        `@opencode-ai/sdk`, informational only — the server declares no
+        minimum CLI version): major skew only warns — evaluation keeps
+        working while nixpkgs lags — so override with a matching major
+        build or wait for nixpkgs to catch up. Patch/minor drift stays
+        silent.
       '';
     };
 
