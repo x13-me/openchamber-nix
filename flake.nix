@@ -7,6 +7,7 @@
   # adds `trusted-public-keys = [ "x13.cachix.org-1:<key>" ];` below.
   nixConfig = {
     extra-substituters = [ "https://x13.cachix.org" ];
+    trusted-public-keys = [ "x13.cachix.org-1:+6Eqv1V8J356Krr1jHrho52ecbP2JzqCClUQPdf6aHU=" ];
   };
 
   inputs = {
