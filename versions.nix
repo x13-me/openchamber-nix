@@ -1,8 +1,8 @@
 # Machine-updated by .github/update-openchamber.sh — do not edit by hand.
 {
-  version = "1.23.2";
-  rev = "64648f7ba3d64bcc7060c996100128407e048b67";
-  srcHash = "sha256-zCVXjxa5RNH5GIrJSBrM2rkZ6Ymp31FSHr4D7zIg2W8=";
+  version = "1.24.0";
+  rev = "ea3ffa863bebe4d25463ec56c88ba67a1fe78639";
+  srcHash = "sha256-5mm9835NA/NcPlIsbtXz4L8WQBxqlAuKKjI5x39xYWw=";
   # Upstream-expected opencode CLI version: the packages/web
   # @opencode-ai/sdk pin (tracks the CLI release line; the server has no
   # separate binary-version gate). Maintained by
@@ -11,11 +11,11 @@
   systems = {
     x86_64-linux = {
       arch = "x86_64";
-      appimage = "sha256-M8KSrj30WASvk+qqdv8fQ+hyxEI7hNFg0XPmLsUmhc8=";
+      appimage = "sha256-DBo1Ue857oZU0pVHlI+5ZK3vlUiXGUow/Y/vdLOSo5Q=";
     };
     aarch64-linux = {
       arch = "arm64";
-      appimage = "sha256-9HUdMi3MgZ6d4hSFsKqzXHhI8DLCFiKpsM5X1qffHXo=";
+      appimage = "sha256-r5HFZjTPfdbG9KB1Th4IDV3Aa/mn0m3Uw+R4sxCo8ss=";
     };
   };
 }
