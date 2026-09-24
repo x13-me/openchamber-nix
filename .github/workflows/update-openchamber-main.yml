@@ -5,8 +5,8 @@ on:
   push:
     branches:
       - main
-  schedule:
-    - cron: "32 * * * *"
+  # schedule:
+  #   - cron: "32 * * * *"
 
 jobs:
   update-openchamber:
